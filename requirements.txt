@@ -5,4 +5,4 @@ google-auth-oauthlib==1.2.1
 pandas==2.2.3
 python-dotenv==1.1.0
 streamlit==1.44.1
-sqlite3
+pip >= 2.5.1
