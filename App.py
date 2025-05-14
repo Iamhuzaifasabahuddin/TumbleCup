@@ -1,72 +1,119 @@
 import calendar
 import os
+import sqlite3
 from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+DB_PATH = "tumble_cup.db"
 
-load_dotenv("creds.env")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=Tumble_Cup"
 
+def init_db():
+    if not os.path.exists(DB_PATH):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute('''
+              CREATE TABLE IF NOT EXISTS orders
+              (
+                  id
+                  INTEGER
+                  PRIMARY
+                  KEY
+                  AUTOINCREMENT,
+                  customer_name
+                  TEXT
+                  NOT
+                  NULL,
+                  email
+                  TEXT
+                  NOT
+                  NULL,
+                  phone
+                  TEXT
+                  NOT
+                  NULL,
+                  item_name
+                  TEXT
+                  NOT
+                  NULL,
+                  quantity
+                  INTEGER
+                  NOT
+                  NULL,
+                  price
+                  REAL
+                  NOT
+                  NULL,
+                  total_price
+                  REAL
+                  NOT
+                  NULL,
+                  instructions
+                  TEXT,
+                  order_date
+                  TEXT
+                  NOT
+                  NULL,
+                  payment_method
+                  TEXT
+                  NOT
+                  NULL,
+                  payment_service
+                  TEXT,
+                  transaction_id
+                  TEXT,
+                  status
+                  TEXT
+                  DEFAULT
+                  'Pending'
+              )
+              ''')
+
+        conn.commit()
+        return conn
+
+
+# Add data to SQLite
+def add_data(data):
+    conn = init_db()
+    c = conn.cursor()
+
+    c.execute('''
+              INSERT INTO orders (customer_name, email, phone, item_name, quantity,
+                                  price, total_price, instructions, order_date,
+                                  payment_method, payment_service, transaction_id, status)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ''', data)
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+# Get order count
+def count_orders():
+    conn = init_db()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM orders')
+    count = c.fetchone()[0]
+    conn.close()
+    return count
+
+
+# Get all orders as DataFrame
+def get_orders():
+    conn = init_db()
+    df = pd.read_sql_query("SELECT * FROM orders", conn)
+    conn.close()
+    return df
+
+
+# Current date information
 month_list = list(calendar.month_name)[1:]
 current_month = datetime.today().month
 current_month_name = calendar.month_name[current_month]
 current_year = datetime.today().year
-
-
-def clean_data(url: str) -> pd.DataFrame:
-    data = pd.read_csv(url)
-    columns = list(data.columns)
-    end_col_index = columns.index("Status")
-    data = data.iloc[:, :end_col_index + 1]
-    return data
-
-
-def count_rows(url) -> int:
-    data = clean_data(url)
-    return len(data)
-
-
-def Add_data(row: int, data: list):
-    creds = None
-    token_path = r'C:\Users\Huzaifa Sabah Uddin\PycharmProjects\TumbleCup\Token.json'
-    credentials_path = r"C:\Users\Huzaifa Sabah Uddin\PycharmProjects\TumbleCup\Credentials.json"
-
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, SCOPES)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(credentials_path, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
-
-    try:
-        service = build('sheets', 'v4', credentials=creds)
-        sheet = service.spreadsheets()
-
-        update_range = f"Tumble_cup!A{row}:L{row}"
-        response = sheet.values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=update_range,
-            valueInputOption="USER_ENTERED",
-            body={"values": [data]}
-        ).execute()
-
-    except HttpError as err:
-        st.error(f"An error occurred: {err}")
-
 
 # Define items with their prices
 tumbler_items = {
@@ -85,8 +132,8 @@ if 'cart' not in st.session_state:
 # Center the title using markdown with HTML
 st.markdown("<h1 style='text-align: center; color: orange;'>Tumble Cup</h1>", unsafe_allow_html=True)
 
-# Create tabs for Shopping and Checkout
-tab1, tab2 = st.tabs(["Shop Items", "Checkout"])
+# Create tabs for Shopping, Checkout, and Admin
+tab1, tab2, tab3 = st.tabs(["Shop Items", "Checkout", "Admin Panel"])
 
 with tab1:
     st.header("Add Items to Cart")
@@ -267,15 +314,22 @@ with tab2:
             if missing_fields:
                 st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
             else:
-                # Get current row count once
-                current_row_count = count_rows(url)
-
                 # Counter for successful item submissions
                 successful_items = 0
 
                 # Process each item in the cart as a separate order row
-                for item_index, (item_name, item_data) in enumerate(st.session_state.cart.items()):
+                for item_name, item_data in st.session_state.cart.items():
                     # Prepare data for submission
+                    payment_service = None
+                    transaction_reference = None
+
+                    if payment_method == "Mobile Money (Jazzcash etc)":
+                        payment_service = mobile_service if mobile_service != "Other" else other_service
+                        transaction_reference = transaction_id
+                    elif payment_method == "Bank Transfer":
+                        payment_service = "Bank Transfer"
+                        transaction_reference = transaction_ref
+
                     order_data = [
                         name,
                         email,
@@ -287,27 +341,17 @@ with tab2:
                         instructions,
                         order_date,
                         payment_method,
+                        payment_service,
+                        transaction_reference,
+                        "Pending"
                     ]
 
-                    # Add payment-specific details
-                    if payment_method == "Mobile Money (Jazzcash etc)":
-                        payment_service = mobile_service if mobile_service != "Other" else other_service
-                        order_data.append(payment_service)
-                        order_data.append(transaction_id)
-                    elif payment_method == "Bank Transfer":
-                        order_data.append("Bank Transfer")
-                        order_data.append(transaction_ref)
-                    else:
-                        order_data.append("NO")
-                    order_data.append("Pending")
-                    next_row = current_row_count + 2 + item_index
-
                     try:
-                        Add_data(next_row, order_data)
+                        add_data(order_data)
                         successful_items += 1
                     except Exception as e:
                         st.error(f"Failed to submit order for {item_name}: {str(e)}")
-                        continue  # Try to continue with other items instead of breaking
+                        continue
 
                 if successful_items > 0:
                     st.success(f"Order submitted successfully! {successful_items} item(s) added to your order.")
@@ -329,3 +373,63 @@ with tab2:
                     st.session_state.cart = {}
                 else:
                     st.error("Failed to submit any items in your order. Please try again.")
+
+# Admin Panel Tab
+with tab3:
+    st.header("Admin Panel")
+
+    # Simple password protection
+    admin_password = st.text_input("Enter Admin Password", type="password")
+    if admin_password == "admin123":
+        st.success("Admin authenticated!")
+
+        st.subheader("All Orders")
+        orders_df = get_orders()
+
+        if not orders_df.empty:
+            # Add filter options
+            status_filter = st.multiselect("Filter by Status", options=orders_df['status'].unique().tolist(),
+                                           default=orders_df['status'].unique().tolist())
+
+            # Apply filters
+            filtered_df = orders_df[orders_df['status'].isin(status_filter)] if status_filter else orders_df
+
+            # Display orders
+            st.dataframe(filtered_df)
+
+            # Allow status updates
+            st.subheader("Update Order Status")
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                order_id = st.number_input("Order ID", min_value=1,
+                                           max_value=int(orders_df['id'].max()) if not orders_df.empty else 1, step=1)
+            with col2:
+                new_status = st.selectbox("New Status", ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
+            with col3:
+                if st.button("Update Status"):
+                    conn = init_db()
+                    c = conn.cursor()
+                    c.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Order #{order_id} status updated to {new_status}")
+                    st.rerun()
+
+            # Export to CSV
+            if st.button("Export Orders to CSV"):
+                csv = filtered_df.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"tumble_cup_orders_{datetime.today().strftime('%Y-%m-%d')}.csv",
+                    mime="text/csv"
+                )
+        else:
+            st.info("No orders found in the database.")
+    elif admin_password:
+        st.error("Incorrect password")
+
+if __name__ == '__main__':
+
+    init_db()
