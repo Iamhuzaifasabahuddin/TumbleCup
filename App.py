@@ -9,69 +9,38 @@ DB_PATH = "tumble_cup.db"
 
 
 def init_db():
+
     if not os.path.exists(DB_PATH):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
         c.execute('''
-              CREATE TABLE IF NOT EXISTS orders
-              (
-                  id
-                  INTEGER
-                  PRIMARY
-                  KEY
-                  AUTOINCREMENT,
-                  customer_name
-                  TEXT
-                  NOT
-                  NULL,
-                  email
-                  TEXT
-                  NOT
-                  NULL,
-                  phone
-                  TEXT
-                  NOT
-                  NULL,
-                  item_name
-                  TEXT
-                  NOT
-                  NULL,
-                  quantity
-                  INTEGER
-                  NOT
-                  NULL,
-                  price
-                  REAL
-                  NOT
-                  NULL,
-                  total_price
-                  REAL
-                  NOT
-                  NULL,
-                  instructions
-                  TEXT,
-                  order_date
-                  TEXT
-                  NOT
-                  NULL,
-                  payment_method
-                  TEXT
-                  NOT
-                  NULL,
-                  payment_service
-                  TEXT,
-                  transaction_id
-                  TEXT,
-                  status
-                  TEXT
-                  DEFAULT
-                  'Pending'
-              )
-              ''')
+            CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                phone TEXT NOT NULL,
+                item_name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                price REAL NOT NULL,
+                total_price REAL NOT NULL,
+                instructions TEXT,
+                order_date TEXT NOT NULL,
+                payment_method TEXT NOT NULL,
+                payment_service TEXT,
+                transaction_id TEXT,
+                status TEXT DEFAULT 'Pending'
+            )
+        ''')
 
         conn.commit()
-        return conn
+        print("Database and table created.")
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        print("Database already exists.")
+
+    # Return the connection to be used later
+    return conn
 
 
 # Add data to SQLite
