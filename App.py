@@ -1,11 +1,15 @@
 import calendar
 import os
+import smtplib
 import sqlite3
 from datetime import datetime
+from email.message import EmailMessage
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
+load_dotenv("creds.env")
 DB_PATH = "tumble_cup.db"
 
 
@@ -24,7 +28,7 @@ def init_db():
                       AUTOINCREMENT,
                       order_number
                       TEXT
-                      NOT 
+                      NOT
                       NULL,
                       customer_name
                       TEXT
@@ -94,6 +98,7 @@ def init_db():
     # Return the connection to be used later
     return conn
 
+
 # def clean_data() -> pd.DataFrame:
 #     conn = init_db()
 #     data = pd.read_sql_query("SELECT * FROM orders", conn)
@@ -103,7 +108,7 @@ def init_db():
 #     return data
 
 # Add data to SQLite
-def add_data(order_number,data):
+def add_data(order_number, data):
     conn = init_db()
     c = conn.cursor()
 
@@ -111,7 +116,7 @@ def add_data(order_number,data):
               INSERT INTO orders (order_number, customer_name, email, phone, address, city, postal_code, item_name,
                                   quantity,
                                   price, total_price, instructions, order_date,
-                                  payment_method, payment_service, transaction_id,payment_status, status)
+                                  payment_method, payment_service, transaction_id, payment_status, status)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ''', (order_number, *data))
 
@@ -120,7 +125,25 @@ def add_data(order_number,data):
     return True
 
 
-# Get order count
+def send_email(subject, body, to_email):
+    gmail_user = "teamtumblecup@gmail.com"
+    app_password = f"{st.secrets["Email"]["Password"]}"
+
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = gmail_user
+    msg['To'] = to_email
+    msg.add_alternative(body, subtype='html')
+    # msg.set_content(body, subtype='html')
+    try:
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(gmail_user, app_password)
+            smtp.send_message(msg)
+            print("Email sent successfully!")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+
+
 def count_orders():
     conn = init_db()
     c = conn.cursor()
@@ -141,6 +164,7 @@ def get_orders(month):
         data = df[df["order_date"].dt.month == current_month]
     return data
 
+
 def generate_order_number():
     conn = init_db()
     c = conn.cursor()
@@ -149,6 +173,7 @@ def generate_order_number():
     conn.close()
     next_id = (last_id or 0) + 1
     return f"#TC{str(next_id).zfill(5)}"
+
 
 month_list = list(calendar.month_name)[1:]
 current_month = datetime.today().month
@@ -355,7 +380,19 @@ with tab2:
             else:
                 successful_items = 0
                 order_number = generate_order_number()
+                order_rows = ""
+                total_amount = 0
                 for item_name, item_data in st.session_state.cart.items():
+                    item_total = item_data['quantity'] * item_data['price']
+                    total_amount += item_total
+                    order_rows += f"""
+                        <tr>
+                            <td>{item_name}</td>
+                            <td>{item_data['quantity']}</td>
+                            <td>Rs. {item_data['price']}</td>
+                            <td>Rs. {item_total}</td>
+                        </tr>
+                    """
                     payment_service = None
                     transaction_reference = None
 
@@ -394,8 +431,45 @@ with tab2:
                         continue
 
                 if successful_items > 0:
-                    st.success(f"Order submitted successfully! {successful_items} item(s) added to your order.")
+                    html_body = f"""
+                    <html>
+                    <body>
+                        <h2 style="color: orange;">Thank you for your order!</h2>
+                        <p><strong>Order Number:</strong> {order_number}</p>
+                        <p><strong>Name:</strong> {name}<br>
+                           <strong>Email:</strong> {email}<br>
+                           <strong>Phone:</strong> {phone}<br>
+                           <strong>Address:</strong> {address_street}, {address_city}, {postal_code}</p>
+
+                        <h3>Order Summary</h3>
+                        <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+                            <thead style="background-color: #f2f2f2;">
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Qty</th>
+                                    <th>Unit Price</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {order_rows}
+                                <tr>
+                                    <td colspan="3"><strong>Total Amount</strong></td>
+                                    <td><strong>Rs. {total_amount}</strong></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <p><strong>Payment Method:</strong> {payment_method}<br>
+                           <strong>Transaction Reference:</strong> {transaction_reference or "N/A"}</p>
+
+                        <p>We will process your order shortly. Thank you for shopping with Tumble Cup!</p>
+                    </body>
+                    </html>
+                    """
+                    st.success(f"Order submitted successfully! {successful_items} item(s) added to your order. \n Email has been sent to {email} Please check your spam or junk!")
                     st.toast(f"Order {order_number} has been placed successfully!")
+                    send_email(f"{order_number} has been placed successfully!", f"{html_body}", str(email))
                     st.subheader("Order Summary")
                     summary_cols = st.columns(2)
                     with summary_cols[0]:
@@ -445,7 +519,6 @@ with tab3:
                                                     options=orders_df['payment_status'].unique().tolist(),
                                                     default=orders_df['payment_status'].unique().tolist())
 
-
                     filtered_df = orders_df[orders_df['status'].isin(status_filter) &
                                             orders_df['payment_status'].isin(payment_filter)]
 
@@ -485,25 +558,25 @@ with tab3:
                                                 options=orders_df['payment_status'].unique().tolist(),
                                                 default=orders_df['payment_status'].unique().tolist())
 
-
                 filtered_df = orders_df[orders_df['status'].isin(status_filter) &
                                         orders_df['payment_status'].isin(payment_filter)]
                 st.dataframe(filtered_df)
 
                 st.subheader("Update Order & Payment Status")
-                col1, col2, col3= st.columns(3)
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     order_id = st.number_input("Order ID", min_value=1,
                                                max_value=int(orders_df['id'].max()) if not orders_df.empty else 1,
                                                step=1)
                     payment_order_id = st.number_input("Payment Order ID", min_value=1,
-                                               max_value=int(orders_df['id'].max()) if not orders_df.empty else 1,
-                                               step=1)
+                                                       max_value=int(
+                                                           orders_df['id'].max()) if not orders_df.empty else 1,
+                                                       step=1)
                 with col2:
                     new_status = st.selectbox("New Status",
                                               ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
                     payment_new_status = st.selectbox("Payment New Status",
-                                              ["Pending", "Processing", "Confirmed", "Cancelled"])
+                                                      ["Pending", "Processing", "Confirmed", "Cancelled"])
                 with col3:
                     if st.button("Update Status"):
                         conn = init_db()
@@ -517,7 +590,8 @@ with tab3:
                     if st.button("Update Payment Status"):
                         conn = init_db()
                         c = conn.cursor()
-                        c.execute("UPDATE orders SET payment_status = ? WHERE id = ?", (payment_new_status, payment_order_id))
+                        c.execute("UPDATE orders SET payment_status = ? WHERE id = ?",
+                                  (payment_new_status, payment_order_id))
                         conn.commit()
                         conn.close()
                         st.success(f"Order #{order_id} payment status updated to {new_status}")
