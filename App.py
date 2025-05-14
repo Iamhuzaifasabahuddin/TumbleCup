@@ -349,7 +349,8 @@ with tab3:
 
     # Simple password protection
     admin_password = st.text_input("Enter Admin Password", type="password")
-    if admin_password == "admin123":
+    pwd = st.secrets["Password"]["Password"]
+    if admin_password == str(pwd):
         st.success("Admin authenticated!")
 
         st.subheader("All Orders")
