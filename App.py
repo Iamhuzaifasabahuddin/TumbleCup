@@ -74,6 +74,10 @@ def init_db():
                       TEXT,
                       transaction_id
                       TEXT,
+                      payment_status
+                      TEXT
+                      DEFAULT
+                      'Pending',
                       status
                       TEXT
                       DEFAULT
@@ -90,6 +94,13 @@ def init_db():
     # Return the connection to be used later
     return conn
 
+# def clean_data() -> pd.DataFrame:
+#     conn = init_db()
+#     data = pd.read_sql_query("SELECT * FROM orders", conn)
+#     conn.close()
+#
+#     data["order_date"] = pd.to_datetime(order_date, errors="coerce")
+#     return data
 
 # Add data to SQLite
 def add_data(order_number,data):
@@ -100,8 +111,8 @@ def add_data(order_number,data):
               INSERT INTO orders (order_number, customer_name, email, phone, address, city, postal_code, item_name,
                                   quantity,
                                   price, total_price, instructions, order_date,
-                                  payment_method, payment_service, transaction_id, status)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  payment_method, payment_service, transaction_id,payment_status, status)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ''', (order_number, *data))
 
     conn.commit()
@@ -119,12 +130,16 @@ def count_orders():
     return count
 
 
-# Get all orders as DataFrame
-def get_orders():
+def get_orders(month):
     conn = init_db()
     df = pd.read_sql_query("SELECT * FROM orders", conn)
     conn.close()
-    return df
+    df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
+    if month:
+        data = df[df["order_date"].dt.month == month]
+    else:
+        data = df[df["order_date"].dt.month == current_month]
+    return data
 
 def generate_order_number():
     conn = init_db()
@@ -367,6 +382,7 @@ with tab2:
                         payment_method,
                         payment_service,
                         transaction_reference,
+                        "Pending",
                         "Pending"
                     ]
 
@@ -403,9 +419,18 @@ with tab3:
     pwd = st.secrets["Password"]["Password"]
     if admin_password == str(pwd):
         st.success("Admin authenticated!")
-        orders_df = get_orders()
+        selected_month = st.selectbox(
+            "Select Month",
+            month_list,
+            index=current_month - 1,
+            placeholder="Select Month"
+        )
+        selected_month_number = month_list.index(selected_month) + 1 if selected_month else None
+        orders_df = get_orders(selected_month_number)
+        orders_df["order_date"] = orders_df["order_date"].dt.strftime("%d-%B-%Y")
         if not orders_df.empty:
-            search_term = st.text_input("Search by Name or Order Number", placeholder="Enter Search Term", key="search_term")
+            search_term = st.text_input("Search by Name or Order Number", placeholder="Enter Search Term",
+                                        key="search_term")
             if search_term:
                 orders_df = orders_df[orders_df['customer_name'].str.contains(search_term, case=False) |
                                       orders_df['order_number'].str.contains(search_term, case=False)]
@@ -416,14 +441,25 @@ with tab3:
 
                     status_filter = st.multiselect("Filter by Status", options=orders_df['status'].unique().tolist(),
                                                    default=orders_df['status'].unique().tolist())
-                    filtered_df = orders_df[orders_df['status'].isin(status_filter)]
+                    payment_filter = st.multiselect("Filter by Payment Status",
+                                                    options=orders_df['payment_status'].unique().tolist(),
+                                                    default=orders_df['payment_status'].unique().tolist())
+
+
+                    filtered_df = orders_df[orders_df['status'].isin(status_filter) &
+                                            orders_df['payment_status'].isin(payment_filter)]
+
+                    filtered_df["order_date"] = filtered_df["order_date"].dt.strftime("%d-%B-%Y")
                     st.dataframe(filtered_df)
+
                     st.subheader("Update Order Status")
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        order_id = st.number_input("Order ID", min_value=1, max_value=int(orders_df['id'].max()), step=1)
+                        order_id = st.number_input("Order ID", min_value=1, max_value=int(orders_df['id'].max()),
+                                                   step=1)
                     with col2:
-                        new_status = st.selectbox("New Status", ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
+                        new_status = st.selectbox("New Status",
+                                                  ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
                     with col3:
                         if st.button("Update Status"):
                             conn = init_db()
@@ -442,17 +478,32 @@ with tab3:
                             mime="text/csv"
                         )
             else:
+
                 status_filter = st.multiselect("Filter by Status", options=orders_df['status'].unique().tolist(),
-                                              default=orders_df['status'].unique().tolist())
-                filtered_df = orders_df[orders_df['status'].isin(status_filter)]
+                                               default=orders_df['status'].unique().tolist())
+                payment_filter = st.multiselect("Filter by Payment Status",
+                                                options=orders_df['payment_status'].unique().tolist(),
+                                                default=orders_df['payment_status'].unique().tolist())
+
+
+                filtered_df = orders_df[orders_df['status'].isin(status_filter) &
+                                        orders_df['payment_status'].isin(payment_filter)]
                 st.dataframe(filtered_df)
-                st.subheader("Update Order Status")
-                col1, col2, col3 = st.columns(3)
+
+                st.subheader("Update Order & Payment Status")
+                col1, col2, col3= st.columns(3)
                 with col1:
-                    order_id = st.number_input("Order ID", min_value=1, max_value=int(orders_df['id'].max()), step=1)
+                    order_id = st.number_input("Order ID", min_value=1,
+                                               max_value=int(orders_df['id'].max()) if not orders_df.empty else 1,
+                                               step=1)
+                    payment_order_id = st.number_input("Payment Order ID", min_value=1,
+                                               max_value=int(orders_df['id'].max()) if not orders_df.empty else 1,
+                                               step=1)
                 with col2:
                     new_status = st.selectbox("New Status",
                                               ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
+                    payment_new_status = st.selectbox("Payment New Status",
+                                              ["Pending", "Processing", "Confirmed", "Cancelled"])
                 with col3:
                     if st.button("Update Status"):
                         conn = init_db()
@@ -462,6 +513,16 @@ with tab3:
                         conn.close()
                         st.success(f"Order #{order_id} status updated to {new_status}")
                         st.rerun()
+
+                    if st.button("Update Payment Status"):
+                        conn = init_db()
+                        c = conn.cursor()
+                        c.execute("UPDATE orders SET payment_status = ? WHERE id = ?", (payment_new_status, payment_order_id))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Order #{order_id} payment status updated to {new_status}")
+                        st.rerun()
+
                 if st.button("Export Orders to CSV"):
                     csv = filtered_df.to_csv(index=False)
                     st.download_button(
