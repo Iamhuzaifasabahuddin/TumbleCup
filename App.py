@@ -128,6 +128,7 @@ def add_data(order_number, data):
 def send_email(subject, body, to_email):
     gmail_user = "teamtumblecup@gmail.com"
     app_password = str(st.secrets["Email"]["Password"])
+    st.info(app_password)
 
     msg = EmailMessage()
     msg['Subject'] = subject
