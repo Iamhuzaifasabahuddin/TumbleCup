@@ -7,9 +7,9 @@ from email.message import EmailMessage
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
-
-load_dotenv("creds.env")
+# from dotenv import load_dotenv
+#
+# load_dotenv("creds.env")
 DB_PATH = "tumble_cup.db"
 
 
@@ -127,7 +127,7 @@ def add_data(order_number, data):
 
 def send_email(subject, body, to_email):
     gmail_user = "teamtumblecup@gmail.com"
-    app_password = f"{st.secrets["Email"]["Password"]}"
+    app_password = str(st.secrets["Email"]["Password"])
 
     msg = EmailMessage()
     msg['Subject'] = subject
