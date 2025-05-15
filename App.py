@@ -127,23 +127,23 @@ def add_data(order_number, data):
 
 def send_email(subject, body, to_email):
     gmail_user = "teamtumblecup@gmail.com"
-    app_password = str(st.secrets["Email"]["Password"])
-    st.info(app_password)
-
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = gmail_user
-    msg['To'] = to_email
-    msg.add_alternative(body, subtype='html')
-    # msg.set_content(body, subtype='html')
     try:
+        app_password = st.secrets["Email"]["Password"]
+
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = gmail_user
+        msg['To'] = to_email
+        msg.set_content("This is a plain text version of the email")
+        msg.add_alternative(body, subtype='html')
+
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(gmail_user, app_password)
             smtp.send_message(msg)
-            print("Email sent successfully!")
+            return True
     except Exception as e:
-        print(f"Failed to send email: {e}")
-
+        st.error(f"Failed to send email: {e}")
+        return False
 
 def count_orders():
     conn = init_db()
