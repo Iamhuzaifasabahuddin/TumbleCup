@@ -2,15 +2,58 @@ import calendar
 import os
 import smtplib
 import sqlite3
+import base64
 from datetime import datetime
 from email.message import EmailMessage
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 import pandas as pd
 import streamlit as st
+
 # from dotenv import load_dotenv
 #
 # load_dotenv("creds.env")
 DB_PATH = "tumble_cup.db"
+
+
+# Encryption setup
+def get_encryption_key():
+    """Generate or retrieve the encryption key from Streamlit secrets"""
+    if "ENCRYPTION_KEY" in st.secrets:
+        key = st.secrets["ENCRYPTION_KEY"]
+    else:
+        salt = f'{st.secrets["Encrypt"]["Salt"]}'.encode('utf-8')
+        password = (st.secrets["Encrypt"]["Password"]).encode()
+
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+        )
+        key = base64.urlsafe_b64encode(kdf.derive(password))
+
+    return key
+
+
+def get_cipher():
+    return Fernet(get_encryption_key())
+
+
+def encrypt_data(data):
+    if data is None:
+        return None
+    cipher = get_cipher()
+    return cipher.encrypt(data.encode()).decode()
+
+
+def decrypt_data(encrypted_data):
+    if encrypted_data is None:
+        return None
+    cipher = get_cipher()
+    return cipher.decrypt(encrypted_data.encode()).decode()
 
 
 def init_db():
@@ -95,22 +138,19 @@ def init_db():
         conn = sqlite3.connect(DB_PATH)
         print("Database already exists.")
 
-    # Return the connection to be used later
     return conn
 
 
-# def clean_data() -> pd.DataFrame:
-#     conn = init_db()
-#     data = pd.read_sql_query("SELECT * FROM orders", conn)
-#     conn.close()
-#
-#     data["order_date"] = pd.to_datetime(order_date, errors="coerce")
-#     return data
-
-# Add data to SQLite
 def add_data(order_number, data):
     conn = init_db()
     c = conn.cursor()
+
+    encrypted_data = list(data)
+
+    encrypted_data[0] = encrypt_data(encrypted_data[0])
+    encrypted_data[1] = encrypt_data(encrypted_data[1])
+    encrypted_data[2] = encrypt_data(encrypted_data[2])
+    encrypted_data[3] = encrypt_data(encrypted_data[3])
 
     c.execute('''
               INSERT INTO orders (order_number, customer_name, email, phone, address, city, postal_code, item_name,
@@ -118,7 +158,7 @@ def add_data(order_number, data):
                                   price, total_price, instructions, order_date,
                                   payment_method, payment_service, transaction_id, payment_status, status)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              ''', (order_number, *data))
+              ''', (order_number, *encrypted_data))
 
     conn.commit()
     conn.close()
@@ -145,6 +185,7 @@ def send_email(subject, body, to_email):
         st.error(f"Failed to send email: {e}")
         return False
 
+
 def count_orders():
     conn = init_db()
     c = conn.cursor()
@@ -158,6 +199,13 @@ def get_orders(month):
     conn = init_db()
     df = pd.read_sql_query("SELECT * FROM orders", conn)
     conn.close()
+
+    if not df.empty:
+        df["customer_name"] = df["customer_name"].apply(lambda x: decrypt_data(x) if x else None)
+        df["email"] = df["email"].apply(lambda x: decrypt_data(x) if x else None)
+        df["phone"] = df["phone"].apply(lambda x: decrypt_data(x) if x else None)
+        df["address"] = df["address"].apply(lambda x: decrypt_data(x) if x else None)
+
     df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
     if month:
         data = df[df["order_date"].dt.month == month]
@@ -302,15 +350,16 @@ with tab2:
         order_date = datetime.today().strftime("%d-%B-%Y")
 
         mobile_money_accounts = {
-            "JazzCash": "0300-1234567",
-            "EasyPaisa": "0333-7654321"
+            "JazzCash": f"{st.secrets["Banking"]["Phone"]}",
+            "EasyPaisa": f"{st.secrets["Banking"]["Phone"]}",
+            "Raast": f"{st.secrets["Banking"]["Phone"]}"
         }
 
         bank_transfer_details = {
-            "Bank Name": "ABC Bank",
-            "Account Title": "Tumble Cup",
-            "Account Number": "12345678901234",
-            "IBAN": "PK12ABCD1234567890123456"
+            "Bank Name": "HBL",
+            "Account Title": "TOOBA",
+            "Account Number": f"{st.secrets["Banking"]["Account"]}",
+            "IBAN": f"{st.secrets["Banking"]["IBAN"]}"
         }
 
         st.markdown('<p class="required">Payment Method</p>', unsafe_allow_html=True)
@@ -323,13 +372,16 @@ with tab2:
 
         if payment_method == "Mobile Money (Jazzcash etc)":
             st.subheader("Mobile Money Account Details")
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.info("JazzCash: " + mobile_money_accounts["JazzCash"])
             with col2:
                 st.info("EasyPaisa: " + mobile_money_accounts["EasyPaisa"])
+            with col3:
+                st.info("Raast: " + mobile_money_accounts["Raast"])
+
             st.markdown('<p class="required">Select Mobile Money Service Used:</p>', unsafe_allow_html=True)
-            mobile_service = st.radio("", ["JazzCash", "EasyPaisa", "Other"], key="mobile_service")
+            mobile_service = st.radio("", ["JazzCash", "EasyPaisa", "Raast", "Other"], key="mobile_service")
             if mobile_service == "Other":
                 st.markdown('<p class="required">Specify Service:</p>', unsafe_allow_html=True)
                 other_service = st.text_input("", placeholder="Enter mobile money service name", key="other_service")
@@ -468,7 +520,8 @@ with tab2:
                     </body>
                     </html>
                     """
-                    st.success(f"Order submitted successfully! {successful_items} item(s) added to your order. \n Email has been sent to {email} Please check your spam or junk!")
+                    st.success(
+                        f"Order submitted successfully! {successful_items} item(s) added to your order. \n Email has been sent to {email} Please check your spam or junk!")
                     st.toast(f"Order {order_number} has been placed successfully!")
                     send_email(f"{order_number} has been placed successfully!", f"{html_body}", str(email))
                     st.subheader("Order Summary")
@@ -502,7 +555,7 @@ with tab3:
         )
         selected_month_number = month_list.index(selected_month) + 1 if selected_month else None
         orders_df = get_orders(selected_month_number)
-        orders_df["order_date"] = orders_df["order_date"].dt.strftime("%d-%B-%Y")
+        orders_df["order_date"] = pd.to_datetime(orders_df["order_date"], errors="coerce").dt.strftime("%d-%B-%Y")
         if not orders_df.empty:
             search_term = st.text_input("Search by Name or Order Number", placeholder="Enter Search Term",
                                         key="search_term")
@@ -523,7 +576,6 @@ with tab3:
                     filtered_df = orders_df[orders_df['status'].isin(status_filter) &
                                             orders_df['payment_status'].isin(payment_filter)]
 
-                    filtered_df["order_date"] = filtered_df["order_date"].dt.strftime("%d-%B-%Y")
                     st.dataframe(filtered_df)
 
                     st.subheader("Update Order Status")
@@ -573,6 +625,10 @@ with tab3:
                                                        max_value=int(
                                                            orders_df['id'].max()) if not orders_df.empty else 1,
                                                        step=1)
+                    delete_order_id = st.number_input("Delete Order ID", min_value=1,
+                                                      max_value=int(
+                                                          orders_df['id'].max()) if not orders_df.empty else 1,
+                                                      step=1)
                 with col2:
                     new_status = st.selectbox("New Status",
                                               ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
@@ -595,7 +651,17 @@ with tab3:
                                   (payment_new_status, payment_order_id))
                         conn.commit()
                         conn.close()
-                        st.success(f"Order #{order_id} payment status updated to {new_status}")
+                        st.success(f"Order #{payment_order_id} payment status updated to {payment_new_status}")
+                        st.rerun()
+
+                    if st.button("Delete Order"):
+                        conn = init_db()
+                        c = conn.cursor()
+                        c.execute("DELETE FROM orders WHERE id = ?",
+                                  (delete_order_id,))
+                        conn.commit()
+                        conn.close()
+                        st.success(f"Order #{delete_order_id} has been deleted")
                         st.rerun()
 
                 if st.button("Export Orders to CSV"):
@@ -606,6 +672,46 @@ with tab3:
                         file_name=f"tumble_cup_orders_{datetime.today().strftime('%Y-%m-%d')}.csv",
                         mime="text/csv"
                     )
+                st.subheader("Database Security Tools")
+                if st.button("Check Encryption Status"):
+                    try:
+
+                        conn = init_db()
+                        c = conn.cursor()
+                        c.execute("SELECT customer_name FROM orders LIMIT 1")
+                        sample = c.fetchone()
+                        conn.close()
+
+                        if sample and sample[0]:
+                            try:
+                                decrypt_data(sample[0])
+                                st.success("✅ Database encryption is active and working correctly!")
+                            except:
+                                st.warning("⚠️ Some records may not be encrypted. Consider upgrading all records.")
+                        else:
+                            st.info("No records found to check encryption status.")
+                    except Exception as e:
+                        st.error(f"Error checking encryption: {str(e)}")
+
+                if st.button("Backup Database"):
+                    try:
+                        import shutil
+
+                        backup_file = f"tumblecup_backup_{datetime.today().strftime('%Y%m%d_%H%M%S')}.db"
+                        shutil.copy2(DB_PATH, backup_file)
+
+                        with open(backup_file, "rb") as f:
+                            bytes_data = f.read()
+
+                        st.download_button(
+                            label="Download Database Backup",
+                            data=bytes_data,
+                            file_name=backup_file,
+                            mime="application/octet-stream"
+                        )
+                        st.success(f"Database backed up successfully as {backup_file}")
+                    except Exception as e:
+                        st.error(f"Backup failed: {str(e)}")
         else:
             st.info("No orders found in the database.")
     elif admin_password:
