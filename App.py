@@ -1,23 +1,25 @@
+import base64
 import calendar
 import os
 import smtplib
 import sqlite3
-import base64
 from datetime import datetime
 from email.message import EmailMessage
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 import pandas as pd
 import streamlit as st
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 # from dotenv import load_dotenv
 #
 # load_dotenv("creds.env")
 DB_PATH = "tumble_cup.db"
+# DB_PATH = "tumble_cup_test.db"
 
 
+# Encryption setup
 # Encryption setup
 def get_encryption_key():
     """Generate or retrieve the encryption key from Streamlit secrets"""
@@ -95,6 +97,10 @@ def init_db():
                       TEXT
                       NOT
                       NULL,
+                      item_style
+                      TEXT
+                      NOT
+                      NULL,
                       quantity
                       INTEGER
                       NOT
@@ -154,10 +160,11 @@ def add_data(order_number, data):
 
     c.execute('''
               INSERT INTO orders (order_number, customer_name, email, phone, address, city, postal_code, item_name,
+                                  item_style,
                                   quantity,
                                   price, total_price, instructions, order_date,
                                   payment_method, payment_service, transaction_id, payment_status, status)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ''', (order_number, *encrypted_data))
 
     conn.commit()
@@ -230,65 +237,76 @@ current_month_name = calendar.month_name[current_month]
 current_year = datetime.today().year
 
 tumbler_items = {
-    "Classic Tumbler": 1500,
-    "Insulated Tumbler": 2000,
-    "Travel Mug": 1800,
-    "Water Bottle": 1200,
-    "Coffee Cup": 1000,
-    "Thermos Flask": 2500
+    "Classic Tumbler": {
+        "price": 3999,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    },
+    "Can Glass": {
+        "price": 1999,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    },
+    "Coffee Cup": {
+        "price": 2399,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    }
 }
 
 if 'cart' not in st.session_state:
     st.session_state.cart = {}
 
+
+def has_custom_or_hand_painted_items():
+    for item in st.session_state.cart.values():
+        if item['style'] in ["Custom", "Hand Painted"]:
+            return True
+    return False
+
+
 st.markdown("<h1 style='text-align: center; color: orange;'>Tumble Cup</h1>", unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["Shop Items", "Checkout", "Admin Panel"])
+tab1, tab2, tab3, tab4 = st.tabs(["Shop Items", "Cart", "Checkout", "Admin Panel"])
 
 with tab1:
     st.header("Add Items to Cart")
 
-    for item_name, item_price in tumbler_items.items():
-        col1, col2, col3 = st.columns([3, 1, 1])
+    for item_name, item_info in tumbler_items.items():
+        col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
 
         with col1:
             st.write(f"**{item_name}**")
-            st.write(f"Price: Rs. {item_price}")
+            st.write(f"Price: Rs. {item_info['price']}")
 
         with col2:
-            quantity = st.number_input(f"Qty", min_value=1, value=1, key=f"qty_{item_name}")
+            style = st.selectbox(
+                f"Select Style",
+                item_info['styles'],
+                key=f"style_{item_name}"
+            )
 
         with col3:
-            if st.button(f"Add to Cart", key=f"add_{item_name}"):
-                if item_name in st.session_state.cart:
-                    st.session_state.cart[item_name]['quantity'] += quantity
-                else:
-                    st.session_state.cart[item_name] = {
-                        'price': item_price,
-                        'quantity': quantity
-                    }
-                st.success(f"Added {quantity} {item_name}(s) to cart!")
+            quantity = st.number_input(f"Qty", min_value=1, value=1, key=f"qty_{item_name}")
 
-        st.divider()
-
+    st.divider()
+    total_items = sum(item['quantity'] for item in st.session_state.cart.values())
+    st.markdown(f"🛒 **Total Items in Cart: {total_items}**")
     if st.session_state.cart:
         st.subheader("Current Cart")
 
         total_cart_price = 0
-        for item_name, item_data in st.session_state.cart.items():
+        for item_key, item_data in st.session_state.cart.items():
             item_total = item_data['price'] * item_data['quantity']
             total_cart_price += item_total
 
             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
             with col1:
-                st.write(f"**{item_name}**")
+                st.write(f"**{item_key}**")
             with col2:
                 st.write(f"Qty: {item_data['quantity']}")
             with col3:
                 st.write(f"Rs. {item_total}")
             with col4:
-                if st.button("Remove", key=f"remove_{item_name}"):
-                    del st.session_state.cart[item_name]
+                if st.button("Remove", key=f"remove_{item_key}"):
+                    del st.session_state.cart[item_key]
                     st.rerun()
 
         st.write(f"**Total: Rs. {total_cart_price}**")
@@ -298,6 +316,7 @@ with tab1:
             st.rerun()
     else:
         st.info("Your cart is empty. Add some items!")
+
 
 st.markdown("""
 <style>
@@ -312,6 +331,36 @@ display: none;
 """, unsafe_allow_html=True)
 
 with tab2:
+    st.header("Cart")
+    if st.session_state.cart:
+        st.subheader("Current Cart")
+
+        total_cart_price = 0
+        for item_key, item_data in st.session_state.cart.items():
+            item_total = item_data['price'] * item_data['quantity']
+            total_cart_price += item_total
+
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            with col1:
+                st.write(f"**{item_key}**")
+            with col2:
+                st.write(f"Qty: {item_data['quantity']}")
+            with col3:
+                st.write(f"Rs. {item_total}")
+            with col4:
+                if st.button("Remove", key=f"remove_{item_key}"):
+                    del st.session_state.cart[item_key]
+                    st.rerun()
+
+        st.write(f"**Total: Rs. {total_cart_price}**")
+
+        if st.button("Clear Cart"):
+            st.session_state.cart = {}
+            st.rerun()
+    else:
+        st.info("Your cart is empty. Add some items!")
+
+with tab3:
     if not st.session_state.cart:
         st.warning("Your cart is empty. Please add items before proceeding to checkout.")
     else:
@@ -319,9 +368,17 @@ with tab2:
 
         cart_total = sum(item['price'] * item['quantity'] for item in st.session_state.cart.values())
         st.subheader("Cart Summary")
-        for item_name, item_data in st.session_state.cart.items():
+
+        # Flag to check if any custom/hand-painted items are in the cart
+        has_custom_items = has_custom_or_hand_painted_items()
+
+        for item_key, item_data in st.session_state.cart.items():
             item_total = item_data['price'] * item_data['quantity']
-            st.write(f"{item_name} × {item_data['quantity']} = Rs. {item_total}")
+            st.write(f"{item_key} × {item_data['quantity']} = Rs. {item_total}")
+
+            # Highlight custom/hand-painted items that will need instructions
+            if item_data['style'] in ["Custom", "Hand Painted"]:
+                st.info(f"Note: '{item_data['style']}' items require detailed instructions")
 
         st.write(f"**Total: Rs. {cart_total}**")
 
@@ -345,8 +402,16 @@ with tab2:
         st.markdown('<p class="required">Postal Code</p>', unsafe_allow_html=True)
         postal_code = st.text_input("", placeholder="Enter your postal code", key="postal_code_input")
 
-        st.markdown('<p class="">Instructions</p>', unsafe_allow_html=True)
-        instructions = st.text_area("", placeholder="Enter any special delivery instructions", key="instructions_input")
+        if has_custom_items:
+            st.markdown('<p class="required">Instructions</p>', unsafe_allow_html=True)
+            instructions = st.text_area("",
+                                        placeholder="Please provide detailed instructions for your custom/hand-painted items",
+                                        key="instructions_input")
+        else:
+            st.markdown('<p class="">Instructions</p>', unsafe_allow_html=True)
+            instructions = st.text_area("", placeholder="Enter any special delivery instructions",
+                                        key="instructions_input")
+
         order_date = datetime.today().strftime("%d-%B-%Y")
 
         mobile_money_accounts = {
@@ -418,6 +483,9 @@ with tab2:
                 missing_fields.append("City")
             if not postal_code:
                 missing_fields.append("Postal Code")
+            # Make instructions required for custom/hand-painted items
+            if has_custom_items and not instructions:
+                missing_fields.append("Instructions (required for custom/hand-painted items)")
             if payment_method == "Mobile Money (Jazzcash etc)":
                 if 'mobile_service' in locals() and mobile_service == "Other" and not (
                         'other_service' in locals() and other_service):
@@ -435,12 +503,13 @@ with tab2:
                 order_number = generate_order_number()
                 order_rows = ""
                 total_amount = 0
-                for item_name, item_data in st.session_state.cart.items():
+                for item_key, item_data in st.session_state.cart.items():
                     item_total = item_data['quantity'] * item_data['price']
                     total_amount += item_total
                     order_rows += f"""
                         <tr>
-                            <td>{item_name}</td>
+                            <td>{item_data['name']}</td>
+                            <td>{item_data['style']}</td>
                             <td>{item_data['quantity']}</td>
                             <td>Rs. {item_data['price']}</td>
                             <td>Rs. {item_total}</td>
@@ -463,7 +532,8 @@ with tab2:
                         address_street,
                         address_city,
                         postal_code,
-                        item_name,
+                        item_data['name'],
+                        item_data['style'],
                         item_data['quantity'],
                         item_data['price'],
                         item_data['price'] * item_data['quantity'],
@@ -480,7 +550,7 @@ with tab2:
                         add_data(order_number, order_data)
                         successful_items += 1
                     except Exception as e:
-                        st.error(f"Failed to submit order for {item_name}: {str(e)}")
+                        st.error(f"Failed to submit order for {item_key}: {str(e)}")
                         continue
 
                 if successful_items > 0:
@@ -499,6 +569,7 @@ with tab2:
                             <thead style="background-color: #f2f2f2;">
                                 <tr>
                                     <th>Item</th>
+                                    <th>Style</th>
                                     <th>Qty</th>
                                     <th>Unit Price</th>
                                     <th>Total</th>
@@ -507,7 +578,7 @@ with tab2:
                             <tbody>
                                 {order_rows}
                                 <tr>
-                                    <td colspan="3"><strong>Total Amount</strong></td>
+                                    <td colspan="4"><strong>Total Amount</strong></td>
                                     <td><strong>Rs. {total_amount}</strong></td>
                                 </tr>
                             </tbody>
@@ -515,6 +586,8 @@ with tab2:
 
                         <p><strong>Payment Method:</strong> {payment_method}<br>
                            <strong>Transaction Reference:</strong> {transaction_reference or "N/A"}</p>
+
+                        <p><strong>Special Instructions:</strong> {instructions or "N/A"}</p>
 
                         <p>We will process your order shortly. Thank you for shopping with Tumble Cup!</p>
                     </body>
@@ -527,21 +600,22 @@ with tab2:
                     st.subheader("Order Summary")
                     summary_cols = st.columns(2)
                     with summary_cols[0]:
-                        for item_name, item_data in st.session_state.cart.items():
+                        for item_key, item_data in st.session_state.cart.items():
                             st.write(
-                                f"**{item_name}:** {item_data['quantity']} × Rs. {item_data['price']} = Rs. {item_data['price'] * item_data['quantity']}")
+                                f"**{item_key}:** {item_data['quantity']} × Rs. {item_data['price']} = Rs. {item_data['price'] * item_data['quantity']}")
                         st.write(f"**Total:** Rs. {cart_total}")
                     with summary_cols[1]:
                         st.write(f"**Order Date:** {order_date}")
                         st.write(f"**Payment Method:** {payment_method}")
                         st.write(f"**Delivery Address:** {address_street}, {address_city}, {postal_code}")
+                        st.write(f"**Instructions:** {instructions}")
                         st.write(f"**Status:** Pending")
 
                     st.session_state.cart = {}
                 else:
                     st.error("Failed to submit any items in your order. Please try again.")
 
-with tab3:
+with tab4:
     st.header("Admin Panel")
     admin_password = st.text_input("Enter Admin Password", type="password")
     pwd = st.secrets["Password"]["Password"]
