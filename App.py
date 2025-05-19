@@ -286,6 +286,21 @@ with tab1:
         with col3:
             quantity = st.number_input(f"Qty", min_value=1, value=1, key=f"qty_{item_name}")
 
+        with col4:
+            if st.button("Add to Cart", key=f"add_{item_name}"):
+                item_key = f"{item_name} ({style})"
+                if item_key in st.session_state.cart:
+                    st.session_state.cart[item_key]['quantity'] += quantity
+                else:
+                    st.session_state.cart[item_key] = {
+                        'name': item_name,
+                        'style': style,
+                        'price': item_info['price'],
+                        'quantity': quantity
+                    }
+                st.success(f"Added {quantity} {item_name} ({style}) to cart!")
+                st.rerun()
+
     st.divider()
     total_items = sum(item['quantity'] for item in st.session_state.cart.values())
     st.markdown(f"🛒 **Total Items in Cart: {total_items}**")
@@ -327,6 +342,8 @@ st.markdown("""
 .st-emotion-cache-1weic72 {
 display: none;
 }
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
