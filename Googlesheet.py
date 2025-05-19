@@ -1,73 +1,599 @@
-import streamlit as st
-import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import calendar
+import smtplib
 from datetime import datetime
+from email.message import EmailMessage
 
-# Connect to Google Sheets
+import pandas as pd
+import streamlit as st
+from streamlit_gsheets import GSheetsConnection
+
+st.set_page_config(page_title="Tumble Cup", page_icon="🥤", layout="wide")
+
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Read existing data
-data = conn.read(worksheet="Tumble_cup")
+tumbler_items = {
+    "Classic Tumbler": {
+        "price": 3999,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    },
+    "Can Glass": {
+        "price": 1999,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    },
+    "Coffee Cup": {
+        "price": 2399,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    }
+}
 
-# Display current data (optional)
-st.subheader("Current Orders")
-st.dataframe(data)
+month_list = list(calendar.month_name)[1:]
+current_month = datetime.today().month
+current_month_name = calendar.month_name[current_month]
+current_year = datetime.today().year
 
-# --- Input Form ---
-st.subheader("Add New Order")
+if 'cart' not in st.session_state:
+    st.session_state.cart = {}
 
-with st.form("order_form"):
-    order_number = st.text_input("Order Number")
-    name = st.text_input("Name")
-    email = st.text_input("Email")
-    phone = st.text_input("Phone no")
-    address = st.text_area("Address")
-    city = st.text_input("City")
-    post_code = st.text_input("Post Code")
-    item = st.text_input("Item")
-    item_style = st.text_input("Item Style")
-    item_quantity = st.number_input("Item Quantity", min_value=1, step=1)
-    price = st.number_input("Price per Item", min_value=0.0)
-    total = item_quantity * price
-    instructions = st.text_area("Instructions")
-    order_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    payment_method = st.selectbox("Payment Method", ["Card", "Cash", "Bank Transfer", "Other"])
-    payment_service = st.text_input("Payment Service (e.g., Stripe, PayPal)")
-    transaction_id = st.text_input("Transaction ID")
-    payment_status = st.selectbox("Payment Status", ["Pending", "Completed", "Failed"])
-    status = st.selectbox("Order Status", ["Processing", "Shipped", "Delivered", "Cancelled"])
 
-    submitted = st.form_submit_button("Submit Order")
+def generate_order_number():
+    """Generate a unique order number"""
+    try:
+        data = conn.read(worksheet="Tumble_cup")
+        if not data.empty and 'order_number' in data.columns:
+            numeric_parts = []
+            for order_num in data['order_number']:
+                if isinstance(order_num, str) and order_num.startswith('#TC'):
+                    try:
+                        numeric_parts.append(int(order_num[3:]))
+                    except ValueError:
+                        pass
 
-# --- Append and Save ---
-if submitted:
-    # Create a new row as DataFrame
-    new_row = pd.DataFrame([{
-        "Order Number": order_number,
-        "Name": name,
-        "Email": email,
-        "Phone no": phone,
-        "Address": address,
-        "City": city,
-        "Post Code": post_code,
-        "Item": item,
-        "Item Style": item_style,
-        "Item Quantity": item_quantity,
-        "Price": price,
-        "Total": total,
-        "Instructions": instructions,
-        "Order Date": order_date,
-        "Payment Method": payment_method,
-        "Payment Service": payment_service,
-        "Transaction ID": transaction_id,
-        "Payment Status": payment_status,
-        "Status": status
-    }])
+            if numeric_parts:
+                next_id = max(numeric_parts) + 1
+            else:
+                next_id = 1
+        else:
+            next_id = 1
+    except Exception as e:
+        st.warning(f"Could not determine last order number: {e}")
+        next_id = 1
 
-    # Append new row to existing data
-    updated_data = pd.concat([data, new_row], ignore_index=True)
+    return f"#TC{str(next_id).zfill(5)}"
 
-    # Update the sheet
-    conn.update(worksheet="Tumble_cup", data=updated_data)
 
-    st.success("✅ Order submitted successfully!")
+def send_email(subject, body, to_email):
+    """Send order confirmation email"""
+    gmail_user = "teamtumblecup@gmail.com"
+    try:
+        app_password = st.secrets["Email"]["Password"]
+
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = gmail_user
+        msg['To'] = to_email
+        msg.set_content("This is a plain text version of the email")
+        msg.add_alternative(body, subtype='html')
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+            smtp.login(gmail_user, app_password)
+            smtp.send_message(msg)
+            return True
+    except Exception as e:
+        st.error(f"Failed to send email: {e}")
+        return False
+
+
+def add_orders_to_gsheet(orders_data):
+    """Add new orders to Google Sheet"""
+    try:
+        existing_data = conn.read(worksheet="Tumble_cup")
+        new_orders_df = pd.DataFrame(orders_data)
+
+        if not existing_data.empty:
+            for col in new_orders_df.columns:
+                if col not in existing_data.columns:
+                    existing_data[col] = None
+
+            updated_data = pd.concat([existing_data, new_orders_df])
+        else:
+            updated_data = new_orders_df
+
+        conn.update(worksheet="Tumble_cup", data=updated_data)
+        return True
+    except Exception as e:
+        st.error(f"Failed to add orders to Google Sheet: {e}")
+        return False
+
+
+def get_orders(month=None):
+    """Retrieve orders optionally filtered by month"""
+    try:
+        data = conn.read(worksheet="Tumble_cup")
+        if data.empty:
+            return pd.DataFrame()
+
+        data["Order Date"] = pd.to_datetime(data["Order Date"], errors="coerce")
+
+        if month:
+            filtered_data = data[data["Order Date"].dt.month == month]
+        else:
+            filtered_data = data[data["Order Date"].dt.month == current_month]
+
+        return filtered_data
+    except Exception as e:
+        st.error(f"Failed to retrieve orders: {e}")
+        return pd.DataFrame()
+
+
+def count_orders():
+    """Count total number of orders"""
+    try:
+        data = conn.read(worksheet="Tumble_cup")
+        if data.empty:
+            return 0
+        return len(data)
+    except Exception as e:
+        st.error(f"Failed to count orders: {e}")
+        return 0
+
+
+def has_custom_or_hand_painted_items():
+    """Check if cart contains any custom or hand-painted items"""
+    for item in st.session_state.cart.values():
+        if item['style'] in ["Custom", "Hand Painted"]:
+            return True
+    return False
+
+
+st.markdown("<h1 style='text-align: center; color: orange;'>Tumble Cup</h1>", unsafe_allow_html=True)
+
+tab1, tab2, tab3, tab4 = st.tabs(["Shop Items", "Cart", "Checkout", "Admin Panel"])
+
+# Shop Items Tab
+with tab1:
+    st.header("Add Items to Cart")
+
+    for item_name, item_info in tumbler_items.items():
+        col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+
+        with col1:
+            st.write(f"**{item_name}**")
+            st.write(f"Price: Rs. {item_info['price']}")
+
+        with col2:
+            style = st.selectbox(
+                f"Select Style",
+                item_info['styles'],
+                key=f"style_{item_name}"
+            )
+
+        with col3:
+            quantity = st.number_input(f"Qty", min_value=1, value=1, key=f"qty_{item_name}")
+
+        with col4:
+            if st.button("Add to Cart", key=f"add_{item_name}"):
+                item_key = f"{item_name} ({style})"
+                if item_key in st.session_state.cart:
+                    st.session_state.cart[item_key]['quantity'] += quantity
+                else:
+                    st.session_state.cart[item_key] = {
+                        'name': item_name,
+                        'style': style,
+                        'price': item_info['price'],
+                        'quantity': quantity
+                    }
+                st.success(f"Added {quantity} {item_name} ({style}) to cart!")
+                st.rerun()
+
+    st.divider()
+    total_items = sum(item['quantity'] for item in st.session_state.cart.values())
+    st.markdown(f"🛒 **Total Items in Cart: {total_items}**")
+
+    if st.session_state.cart:
+        st.subheader("Current Cart")
+
+        total_cart_price = 0
+        for item_key, item_data in st.session_state.cart.items():
+            item_total = item_data['price'] * item_data['quantity']
+            total_cart_price += item_total
+
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            with col1:
+                st.write(f"**{item_key}**")
+            with col2:
+                st.write(f"Qty: {item_data['quantity']}")
+            with col3:
+                st.write(f"Rs. {item_total}")
+            with col4:
+                if st.button("Remove", key=f"remove_{item_key}"):
+                    del st.session_state.cart[item_key]
+                    st.rerun()
+
+        st.write(f"**Total: Rs. {total_cart_price}**")
+
+        if st.button("Clear Cart"):
+            st.session_state.cart = {}
+            st.rerun()
+    else:
+        st.info("Your cart is empty. Add some items!")
+
+# Custom CSS
+st.markdown("""
+<style>
+.required:after {
+    content: " *";
+    color: red;
+}
+.st-emotion-cache-1weic72 {
+display: none;
+}
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# Cart Tab
+with tab2:
+    st.header("Cart")
+    if st.session_state.cart:
+        st.subheader("Current Cart")
+
+        total_cart_price = 0
+        for item_key, item_data in st.session_state.cart.items():
+            item_total = item_data['price'] * item_data['quantity']
+            total_cart_price += item_total
+
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            with col1:
+                st.write(f"**{item_key}**")
+            with col2:
+                st.write(f"Qty: {item_data['quantity']}")
+            with col3:
+                st.write(f"Rs. {item_total}")
+            with col4:
+                if st.button("Remove", key=f"tab2_remove_{item_key}"):
+                    del st.session_state.cart[item_key]
+                    st.rerun()
+
+        st.write(f"**Total: Rs. {total_cart_price}**")
+
+        if st.button("Clear Cart", key="tab2_clear"):
+            st.session_state.cart = {}
+            st.info("Your Cart has been Cleared!")
+            st.rerun()
+    else:
+        st.info("Your cart is empty. Add some items!")
+
+with tab3:
+    if not st.session_state.cart:
+        st.warning("Your cart is empty. Please add items before proceeding to checkout.")
+    else:
+        st.header("Checkout")
+
+        cart_total = sum(item['price'] * item['quantity'] for item in st.session_state.cart.values())
+        st.subheader("Cart Summary")
+
+        has_custom_items = has_custom_or_hand_painted_items()
+
+        for item_key, item_data in st.session_state.cart.items():
+            item_total = item_data['quantity'] * item_data['price']
+            st.write(f"{item_key} × {item_data['quantity']} = Rs. {item_total}")
+
+            # Highlight custom/hand-painted items that will need instructions
+            if item_data['style'] in ["Custom", "Hand Painted"]:
+                st.info(f"Note: '{item_data['style']}' items require detailed instructions")
+
+        st.write(f"**Total: Rs. {cart_total}**")
+
+        st.subheader("Contact Information")
+        st.markdown('<p class="required">Name</p>', unsafe_allow_html=True)
+        name = st.text_input("", placeholder="Enter your name", key="name_input")
+
+        st.markdown('<p class="required">Email</p>', unsafe_allow_html=True)
+        email = st.text_input("", placeholder="Enter your email", key="email_input")
+
+        st.markdown('<p class="required">Phone</p>', unsafe_allow_html=True)
+        phone = st.text_input("", placeholder="Enter your phone", key="phone_input")
+
+        st.subheader("Delivery Address")
+        st.markdown('<p class="required">Street Address</p>', unsafe_allow_html=True)
+        address_street = st.text_input("", placeholder="Enter your street address", key="address_street_input")
+
+        st.markdown('<p class="required">City</p>', unsafe_allow_html=True)
+        address_city = st.text_input("", placeholder="Enter your city", key="address_city_input")
+
+        st.markdown('<p class="required">Postal Code</p>', unsafe_allow_html=True)
+        postal_code = st.text_input("", placeholder="Enter your postal code", key="postal_code_input")
+
+        if has_custom_items:
+            st.markdown('<p class="required">Instructions</p>', unsafe_allow_html=True)
+            instructions = st.text_area("",
+                                        placeholder="Please provide detailed instructions for your custom/hand-painted items",
+                                        key="instructions_input")
+        else:
+            st.markdown('<p class="">Instructions</p>', unsafe_allow_html=True)
+            instructions = st.text_area("", placeholder="Enter any special delivery instructions",
+                                        key="instructions_input")
+
+        order_date = datetime.today().strftime("%d-%B-%Y")
+
+        mobile_money_accounts = {
+            "JazzCash": f"{st.secrets['Banking']['Phone']}",
+            "EasyPaisa": f"{st.secrets['Banking']['Phone']}",
+            "Raast": f"{st.secrets['Banking']['Phone']}"
+        }
+
+        bank_transfer_details = {
+            "Bank Name": "HBL",
+            "Account Title": "TOOBA",
+            "Account Number": f"{st.secrets['Banking']['Account']}",
+            "IBAN": f"{st.secrets['Banking']['IBAN']}"
+        }
+
+        st.markdown('<p class="required">Payment Method</p>', unsafe_allow_html=True)
+        payment_method = st.selectbox(
+            "",
+            ["Cash on Delivery", "Mobile Money (Jazzcash etc)", "Bank Transfer"],
+            index=0,
+            key="payment_method"
+        )
+
+        payment_service = None
+        transaction_id = None
+
+        if payment_method == "Mobile Money (Jazzcash etc)":
+            st.subheader("Mobile Money Account Details")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.info("JazzCash: " + mobile_money_accounts["JazzCash"])
+            with col2:
+                st.info("EasyPaisa: " + mobile_money_accounts["EasyPaisa"])
+            with col3:
+                st.info("Raast: " + mobile_money_accounts["Raast"])
+
+            st.markdown('<p class="required">Select Mobile Money Service Used:</p>', unsafe_allow_html=True)
+            mobile_service = st.radio("", ["JazzCash", "EasyPaisa", "Raast", "Other"], key="mobile_service")
+            if mobile_service == "Other":
+                st.markdown('<p class="required">Specify Service:</p>', unsafe_allow_html=True)
+                other_service = st.text_input("", placeholder="Enter mobile money service name", key="other_service")
+                payment_service = other_service
+            else:
+                payment_service = mobile_service
+
+            st.markdown('<p class="required">Transaction ID:</p>', unsafe_allow_html=True)
+            transaction_id = st.text_input("", placeholder="Enter transaction ID", key="transaction_id")
+
+        elif payment_method == "Bank Transfer":
+            st.subheader("Bank Transfer Details")
+            st.info(f"""
+            **Bank Name:** {bank_transfer_details['Bank Name']}  
+            **Account Title:** {bank_transfer_details['Account Title']}  
+            **Account Number:** {bank_transfer_details['Account Number']}  
+            **IBAN:** {bank_transfer_details['IBAN']}
+            """)
+            st.markdown('<p class="required">Transaction Reference:</p>', unsafe_allow_html=True)
+            transaction_id = st.text_input("", placeholder="Enter bank transfer reference", key="transaction_ref")
+            payment_service = "Bank Transfer"
+
+        submit_button = st.button("Place Order")
+
+        if submit_button:
+            missing_fields = []
+
+            if not name:
+                missing_fields.append("Name")
+            if not email:
+                missing_fields.append("Email")
+            if not phone:
+                missing_fields.append("Phone")
+            if not address_street:
+                missing_fields.append("Street Address")
+            if not address_city:
+                missing_fields.append("City")
+            if not postal_code:
+                missing_fields.append("Postal Code")
+
+            if has_custom_items and not instructions:
+                missing_fields.append("Instructions (required for custom/hand-painted items)")
+            if payment_method == "Mobile Money (Jazzcash etc)":
+                if mobile_service == "Other" and not payment_service:
+                    missing_fields.append("Mobile Money Service")
+                if not transaction_id:
+                    missing_fields.append("Transaction ID")
+            elif payment_method == "Bank Transfer":
+                if not transaction_id:
+                    missing_fields.append("Transaction Reference")
+
+            if missing_fields:
+                st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
+            else:
+                order_number = generate_order_number()
+                order_rows = ""
+                total_amount = 0
+
+                # Create a list to hold all order data rows
+                all_order_data = []
+
+                for item_key, item_data in st.session_state.cart.items():
+                    item_total = item_data['quantity'] * item_data['price']
+                    total_amount += item_total
+                    order_rows += f"""
+                        <tr>
+                            <td>{item_data['name']}</td>
+                            <td>{item_data['style']}</td>
+                            <td>{item_data['quantity']}</td>
+                            <td>Rs. {item_data['price']}</td>
+                            <td>Rs. {item_total}</td>
+                        </tr>
+                    """
+                    order_data = {
+                        "Order Number": order_number,
+                        "Name": name,
+                        "Email": email,
+                        "Phone no": phone,
+                        "Address": address_street,
+                        "City": address_city,
+                        "Post Code": postal_code,
+                        "Item Name": item_data['name'],
+                        "Item Style": item_data['style'],
+                        "Item Quantity": item_data['quantity'],
+                        "Price": item_data['price'],
+                        "Total": item_data['price'] * item_data['quantity'],
+                        "Instructions": instructions,
+                        "Order Date": order_date,
+                        "Payment Method": payment_method,
+                        "Payment Service": payment_service,
+                        "Transaction ID": transaction_id,
+                        "Payment Status": "Pending",
+                        "Status": "Pending"
+                    }
+
+                    all_order_data.append(order_data)
+
+                # Add all items to the sheet at once
+                try:
+                    if add_orders_to_gsheet(all_order_data):
+                        successful_items = len(all_order_data)
+                    else:
+                        successful_items = 0
+                except Exception as e:
+                    st.error(f"Failed to submit orders: {str(e)}")
+                    successful_items = 0
+
+                if successful_items > 0:
+                    html_body = f"""
+                    <html>
+                    <body>
+                        <h2 style="color: orange;">Thank you for your order!</h2>
+                        <p><strong>Order Number:</strong> {order_number}</p>
+                        <p><strong>Name:</strong> {name}<br>
+                           <strong>Email:</strong> {email}<br>
+                           <strong>Phone:</strong> {phone}<br>
+                           <strong>Address:</strong> {address_street}, {address_city}, {postal_code}</p>
+
+                        <h3>Order Summary</h3>
+                        <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+                            <thead style="background-color: #f2f2f2;">
+                                <tr>
+                                    <th>Item</th>
+                                    <th>Style</th>
+                                    <th>Qty</th>
+                                    <th>Unit Price</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {order_rows}
+                                <tr>
+                                    <td colspan="4"><strong>Total Amount</strong></td>
+                                    <td><strong>Rs. {total_amount}</strong></td>
+                                </tr>
+                            </tbody>
+                        </table>
+
+                        <p><strong>Payment Method:</strong> {payment_method}<br>
+                           <strong>Transaction Reference:</strong> {transaction_id or "N/A"}</p>
+
+                        <p><strong>Special Instructions:</strong> {instructions or "N/A"}</p>
+
+                        <p>We will process your order shortly. Thank you for shopping with Tumble Cup!</p>
+                    </body>
+                    </html>
+                    """
+                    st.success(
+                        f"Order submitted successfully! {successful_items} item(s) added to your order. \nEmail has been sent to {email}. Please check your spam or junk folder if you don't see it!")
+                    st.toast(f"Order {order_number} has been placed successfully!")
+                    send_email(f"Tumble Cup Order {order_number} has been placed successfully!", html_body, email)
+
+                    st.subheader("Order Summary")
+                    summary_cols = st.columns(2)
+                    with summary_cols[0]:
+                        for item_key, item_data in st.session_state.cart.items():
+                            st.write(
+                                f"**{item_key}:** {item_data['quantity']} × Rs. {item_data['price']} = Rs. {item_data['price'] * item_data['quantity']}")
+                        st.write(f"**Total:** Rs. {cart_total}")
+                    with summary_cols[1]:
+                        st.write(f"**Order Number:** {order_number}")
+                        st.write(f"**Order Date:** {order_date}")
+                        st.write(f"**Payment Method:** {payment_method}")
+                        st.write(f"**Delivery Address:** {address_street}, {address_city}, {postal_code}")
+                        st.write(f"**Instructions:** {instructions or 'None provided'}")
+                        st.write(f"**Status:** Pending")
+
+                    st.session_state.cart = {}
+                else:
+                    st.error("Failed to submit any items in your order. Please try again.")
+
+with tab4:
+    st.header("Admin Panel")
+
+    admin_password = st.text_input("Enter Admin Password", type="password")
+
+    if admin_password == st.secrets.get("Admin", {}).get("Password", "admin123"):
+        st.success("Admin access granted")
+
+        # Filter orders by month
+        selected_month = st.selectbox("Select Month", month_list, index=current_month - 1)
+        month_num = month_list.index(selected_month) + 1
+
+        orders_data = get_orders(month_num)
+
+        if not orders_data.empty:
+            st.subheader(f"Orders for {selected_month}")
+
+            # Display order summary
+            st.write(f"Total Orders: {len(orders_data)}")
+
+            # Filter options
+            status_filter = st.multiselect("Filter by Status",
+                                           options=orders_data['Status'].unique(),
+                                           default=orders_data['Status'].unique())
+
+            filtered_orders = orders_data[orders_data['Status'].isin(status_filter)]
+
+            # Allow updating order status
+            selected_order = st.selectbox("Select Order to Update",
+                                          options=filtered_orders['Order Number'].unique())
+
+            if selected_order:
+                order_idx = filtered_orders[filtered_orders['Order Number'] == selected_order].index[0]
+                current_status = filtered_orders.loc[order_idx, 'Status']
+
+                new_status = st.selectbox("Update Status",
+                                          options=["Pending", "Processing", "Shipped", "Delivered", "Cancelled"],
+                                          index=["Pending", "Processing", "Shipped", "Delivered", "Cancelled"].index(
+                                              current_status))
+
+                if st.button("Update Status"):
+                    try:
+                        # Read all data
+                        all_data = conn.read(worksheet="Tumble_cup")
+
+                        # Find the row with the selected order number and update its status
+                        order_mask = all_data['Order Number'] == selected_order
+                        all_data.loc[order_mask, 'Status'] = new_status
+
+                        # Write updated data back to Google Sheets
+                        conn.update(worksheet="Tumble_cup", data=all_data)
+
+                        st.success(f"Order {selected_order} status updated to {new_status}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to update order status: {e}")
+
+            st.subheader("Orders List")
+            st.dataframe(filtered_orders)
+
+            # Export options
+            if st.button("Export to CSV"):
+                csv = filtered_orders.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name=f"tumble_cup_orders_{selected_month}.csv",
+                    mime="text/csv",
+                )
+        else:
+            st.info(f"No orders found for {selected_month}")
+    elif admin_password:
+        st.error("Incorrect password")
