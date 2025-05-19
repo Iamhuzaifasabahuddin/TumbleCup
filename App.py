@@ -1,178 +1,70 @@
-import base64
 import calendar
-import os
 import smtplib
-import sqlite3
+import time
 from datetime import datetime
 from email.message import EmailMessage
 
 import pandas as pd
 import streamlit as st
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from streamlit_gsheets import GSheetsConnection
 
-# from dotenv import load_dotenv
-#
-# load_dotenv("creds.env")
-DB_PATH = "tumble_cup.db"
-# DB_PATH = "tumble_cup_test.db"
+st.set_page_config(page_title="Tumble Cup", page_icon="🥤", layout="wide")
 
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Encryption setup
-# Encryption setup
-def get_encryption_key():
-    """Generate or retrieve the encryption key from Streamlit secrets"""
-    if "ENCRYPTION_KEY" in st.secrets:
-        key = st.secrets["ENCRYPTION_KEY"]
-    else:
-        salt = f'{st.secrets["Encrypt"]["Salt"]}'.encode('utf-8')
-        password = (st.secrets["Encrypt"]["Password"]).encode()
+tumbler_items = {
+    "Classic Tumbler": {
+        "price": 3999,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    },
+    "Can Glass": {
+        "price": 1999,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    },
+    "Coffee Cup": {
+        "price": 2399,
+        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
+    }
+}
 
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000,
-        )
-        key = base64.urlsafe_b64encode(kdf.derive(password))
+month_list = list(calendar.month_name)[1:]
+current_month = datetime.today().month
+current_month_name = calendar.month_name[current_month]
+current_year = datetime.today().year
 
-    return key
+if 'cart' not in st.session_state:
+    st.session_state.cart = {}
 
 
-def get_cipher():
-    return Fernet(get_encryption_key())
+def generate_order_number():
+    """Generate a unique order number"""
+    try:
+        data = conn.read(worksheet="Tumble_cup")
+        if not data.empty and 'Order Number' in data.columns:
+            print("hi")
+            numeric_parts = []
+            for order_num in data['Order Number']:
+                if isinstance(order_num, str) and order_num.startswith('#TC'):
+                    try:
+                        numeric_parts.append(int(order_num[3:]))
+                    except ValueError:
+                        pass
 
+            if numeric_parts:
+                next_id = max(numeric_parts) + 1
+            else:
+                next_id = 1
+        else:
+            next_id = 1
+    except Exception as e:
+        st.warning(f"Could not determine last order number: {e}")
+        next_id = 1
 
-def encrypt_data(data):
-    if data is None:
-        return None
-    cipher = get_cipher()
-    return cipher.encrypt(data.encode()).decode()
-
-
-def decrypt_data(encrypted_data):
-    if encrypted_data is None:
-        return None
-    cipher = get_cipher()
-    return cipher.decrypt(encrypted_data.encode()).decode()
-
-
-def init_db():
-    if not os.path.exists(DB_PATH):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        c.execute('''
-                  CREATE TABLE IF NOT EXISTS orders
-                  (
-                      id
-                      INTEGER
-                      PRIMARY
-                      KEY
-                      AUTOINCREMENT,
-                      order_number
-                      TEXT
-                      NOT
-                      NULL,
-                      customer_name
-                      TEXT
-                      NOT
-                      NULL,
-                      email
-                      TEXT
-                      NOT
-                      NULL,
-                      phone
-                      TEXT
-                      NOT
-                      NULL,
-                      address
-                      TEXT,
-                      city
-                      TEXT,
-                      postal_code
-                      TEXT,
-                      item_name
-                      TEXT
-                      NOT
-                      NULL,
-                      item_style
-                      TEXT
-                      NOT
-                      NULL,
-                      quantity
-                      INTEGER
-                      NOT
-                      NULL,
-                      price
-                      REAL
-                      NOT
-                      NULL,
-                      total_price
-                      REAL
-                      NOT
-                      NULL,
-                      instructions
-                      TEXT,
-                      order_date
-                      TEXT
-                      NOT
-                      NULL,
-                      payment_method
-                      TEXT
-                      NOT
-                      NULL,
-                      payment_service
-                      TEXT,
-                      transaction_id
-                      TEXT,
-                      payment_status
-                      TEXT
-                      DEFAULT
-                      'Pending',
-                      status
-                      TEXT
-                      DEFAULT
-                      'Pending'
-                  )
-                  ''')
-
-        conn.commit()
-        print("Database and table created.")
-    else:
-        conn = sqlite3.connect(DB_PATH)
-        print("Database already exists.")
-
-    return conn
-
-
-def add_data(order_number, data):
-    conn = init_db()
-    c = conn.cursor()
-
-    encrypted_data = list(data)
-
-    encrypted_data[0] = encrypt_data(encrypted_data[0])
-    encrypted_data[1] = encrypt_data(encrypted_data[1])
-    encrypted_data[2] = encrypt_data(encrypted_data[2])
-    encrypted_data[3] = encrypt_data(encrypted_data[3])
-
-    c.execute('''
-              INSERT INTO orders (order_number, customer_name, email, phone, address, city, postal_code, item_name,
-                                  item_style,
-                                  quantity,
-                                  price, total_price, instructions, order_date,
-                                  payment_method, payment_service, transaction_id, payment_status, status)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              ''', (order_number, *encrypted_data))
-
-    conn.commit()
-    conn.close()
-    return True
+    return f"#TC{str(next_id).zfill(5)}"
 
 
 def send_email(subject, body, to_email):
+    """Send order confirmation email"""
     gmail_user = "teamtumblecup@gmail.com"
     try:
         app_password = st.secrets["Email"]["Password"]
@@ -193,69 +85,73 @@ def send_email(subject, body, to_email):
         return False
 
 
+def add_orders_to_gsheet(orders_data):
+    """Add new orders to Google Sheet with auto-incremented ID"""
+    try:
+        existing_data = conn.read(worksheet="Tumble_cup")
+
+        new_orders_df = pd.DataFrame(orders_data)
+        if not existing_data.empty:
+            if 'ID' in existing_data.columns:
+                starting_id = int(existing_data['ID'].max()) + 1
+            else:
+                starting_id = len(existing_data)
+        else:
+            starting_id = 0
+
+        new_orders_df.insert(0, "ID", range(starting_id, starting_id + len(new_orders_df)))
+
+        if not existing_data.empty:
+            for col in new_orders_df.columns:
+                if col not in existing_data.columns:
+                    existing_data[col] = None
+
+            updated_data = pd.concat([existing_data, new_orders_df], ignore_index=True)
+        else:
+            updated_data = new_orders_df
+
+        conn.update(worksheet="Tumble_cup", data=updated_data)
+        return True
+    except Exception as e:
+        st.error(f"Failed to add orders to Google Sheet: {e}")
+        return False
+
+
+
+def get_orders(month=None):
+    """Retrieve orders optionally filtered by month"""
+    try:
+        data = conn.read(worksheet="Tumble_cup")
+        if data.empty:
+            return pd.DataFrame()
+
+        data["Order Date"] = pd.to_datetime(data["Order Date"], errors="coerce")
+
+        if month:
+            filtered_data = data[data["Order Date"].dt.month == month]
+        else:
+            filtered_data = data[data["Order Date"].dt.month == current_month]
+
+        return filtered_data
+    except Exception as e:
+        st.error(f"Failed to retrieve orders: {e}")
+        return pd.DataFrame()
+
+
 def count_orders():
-    conn = init_db()
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM orders')
-    count = c.fetchone()[0]
-    conn.close()
-    return count
-
-
-def get_orders(month):
-    conn = init_db()
-    df = pd.read_sql_query("SELECT * FROM orders", conn)
-    conn.close()
-
-    if not df.empty:
-        df["customer_name"] = df["customer_name"].apply(lambda x: decrypt_data(x) if x else None)
-        df["email"] = df["email"].apply(lambda x: decrypt_data(x) if x else None)
-        df["phone"] = df["phone"].apply(lambda x: decrypt_data(x) if x else None)
-        df["address"] = df["address"].apply(lambda x: decrypt_data(x) if x else None)
-
-    df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
-    if month:
-        data = df[df["order_date"].dt.month == month]
-    else:
-        data = df[df["order_date"].dt.month == current_month]
-    return data
-
-
-def generate_order_number():
-    conn = init_db()
-    c = conn.cursor()
-    c.execute('SELECT MAX(id) FROM orders')
-    last_id = c.fetchone()[0]
-    conn.close()
-    next_id = (last_id or 0) + 1
-    return f"#TC{str(next_id).zfill(5)}"
-
-
-month_list = list(calendar.month_name)[1:]
-current_month = datetime.today().month
-current_month_name = calendar.month_name[current_month]
-current_year = datetime.today().year
-
-tumbler_items = {
-    "Classic Tumbler": {
-        "price": 3999,
-        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
-    },
-    "Can Glass": {
-        "price": 1999,
-        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
-    },
-    "Coffee Cup": {
-        "price": 2399,
-        "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
-    }
-}
-
-if 'cart' not in st.session_state:
-    st.session_state.cart = {}
+    """Count total number of orders"""
+    try:
+        data = conn.read(worksheet="Tumble_cup")
+        if data.empty:
+            return 0
+        return len(data)
+    except Exception as e:
+        st.error(f"Failed to count orders: {e}")
+        return 0
 
 
 def has_custom_or_hand_painted_items():
+    """Check if cart contains any custom or hand-painted items"""
     for item in st.session_state.cart.values():
         if item['style'] in ["Custom", "Hand Painted"]:
             return True
@@ -264,8 +160,9 @@ def has_custom_or_hand_painted_items():
 
 st.markdown("<h1 style='text-align: center; color: orange;'>Tumble Cup</h1>", unsafe_allow_html=True)
 
-tab1, tab2, tab3, tab4 = st.tabs(["Shop Items", "Cart", "Checkout", "Admin Panel"])
+tab1, tab2, tab3= st.tabs(["Shop Items", "Cart", "Checkout"])
 
+# Shop Items Tab
 with tab1:
     st.header("Add Items to Cart")
 
@@ -299,56 +196,11 @@ with tab1:
                         'quantity': quantity
                     }
                 st.success(f"Added {quantity} {item_name} ({style}) to cart!")
-                st.rerun()
 
     st.divider()
     total_items = sum(item['quantity'] for item in st.session_state.cart.values())
     st.markdown(f"🛒 **Total Items in Cart: {total_items}**")
-    # if st.session_state.cart:
-    #     st.subheader("Current Cart")
-    #
-    #     total_cart_price = 0
-    #     for item_key, item_data in st.session_state.cart.items():
-    #         item_total = item_data['price'] * item_data['quantity']
-    #         total_cart_price += item_total
-    #
-    #         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-    #         with col1:
-    #             st.write(f"**{item_key}**")
-    #         with col2:
-    #             st.write(f"Qty: {item_data['quantity']}")
-    #         with col3:
-    #             st.write(f"Rs. {item_total}")
-    #         with col4:
-    #             if st.button("Remove", key=f"remove_{item_key}"):
-    #                 del st.session_state.cart[item_key]
-    #                 st.rerun()
-    #
-    #     st.write(f"**Total: Rs. {total_cart_price}**")
-    #
-    #     if st.button("Clear Cart"):
-    #         st.session_state.cart = {}
-    #         st.rerun()
-    # else:
-    #     st.info("Your cart is empty. Add some items!")
 
-
-st.markdown("""
-<style>
-.required:after {
-    content: " *";
-    color: red;
-}
-.st-emotion-cache-1weic72 {
-display: none;
-}
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
-
-with tab2:
-    st.header("Cart")
     if st.session_state.cart:
         st.subheader("Current Cart")
 
@@ -367,12 +219,65 @@ with tab2:
             with col4:
                 if st.button("Remove", key=f"remove_{item_key}"):
                     del st.session_state.cart[item_key]
+
+                    time.sleep(5)
                     st.rerun()
 
         st.write(f"**Total: Rs. {total_cart_price}**")
 
         if st.button("Clear Cart"):
             st.session_state.cart = {}
+
+            time.sleep(5)
+            st.rerun()
+    else:
+        st.info("Your cart is empty. Add some items!")
+
+# Custom CSS
+st.markdown("""
+<style>
+.required:after {
+    content: " *";
+    color: red;
+}
+.st-emotion-cache-1weic72 {
+display: none;
+}
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# Cart Tab
+with tab2:
+    st.header("Cart")
+    if st.session_state.cart:
+        st.subheader("Current Cart")
+
+        total_cart_price = 0
+        for item_key, item_data in st.session_state.cart.items():
+            item_total = item_data['price'] * item_data['quantity']
+            total_cart_price += item_total
+
+            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+            with col1:
+                st.write(f"**{item_key}**")
+            with col2:
+                st.write(f"Qty: {item_data['quantity']}")
+            with col3:
+                st.write(f"Rs. {item_total}")
+            with col4:
+                if st.button("Remove", key=f"tab2_remove_{item_key}"):
+                    del st.session_state.cart[item_key]
+                    st.rerun()
+
+        st.write(f"**Total: Rs. {total_cart_price}**")
+
+        if st.button("Clear Cart", key="tab2_clear"):
+            st.session_state.cart = {}
+            st.info("Your Cart has been Cleared!")
+
+            time.sleep(5)
             st.rerun()
     else:
         st.info("Your cart is empty. Add some items!")
@@ -389,9 +294,10 @@ with tab3:
         has_custom_items = has_custom_or_hand_painted_items()
 
         for item_key, item_data in st.session_state.cart.items():
-            item_total = item_data['price'] * item_data['quantity']
+            item_total = item_data['quantity'] * item_data['price']
             st.write(f"{item_key} × {item_data['quantity']} = Rs. {item_total}")
 
+            # Highlight custom/hand-painted items that will need instructions
             if item_data['style'] in ["Custom", "Hand Painted"]:
                 st.info(f"Note: '{item_data['style']}' items require detailed instructions")
 
@@ -430,16 +336,16 @@ with tab3:
         order_date = datetime.today().strftime("%d-%B-%Y")
 
         mobile_money_accounts = {
-            "JazzCash": f"{st.secrets["Banking"]["Phone"]}",
-            "EasyPaisa": f"{st.secrets["Banking"]["Phone"]}",
-            "Raast": f"{st.secrets["Banking"]["Phone"]}"
+            "JazzCash": f"{st.secrets['Banking']['Phone']}",
+            "EasyPaisa": f"{st.secrets['Banking']['Phone']}",
+            "Raast": f"{st.secrets['Banking']['Phone']}"
         }
 
         bank_transfer_details = {
             "Bank Name": "HBL",
             "Account Title": "TOOBA",
-            "Account Number": f"{st.secrets["Banking"]["Account"]}",
-            "IBAN": f"{st.secrets["Banking"]["IBAN"]}"
+            "Account Number": f"{st.secrets['Banking']['Account']}",
+            "IBAN": f"{st.secrets['Banking']['IBAN']}"
         }
 
         st.markdown('<p class="required">Payment Method</p>', unsafe_allow_html=True)
@@ -449,6 +355,9 @@ with tab3:
             index=0,
             key="payment_method"
         )
+
+        payment_service = None
+        transaction_id = None
 
         if payment_method == "Mobile Money (Jazzcash etc)":
             st.subheader("Mobile Money Account Details")
@@ -465,6 +374,9 @@ with tab3:
             if mobile_service == "Other":
                 st.markdown('<p class="required">Specify Service:</p>', unsafe_allow_html=True)
                 other_service = st.text_input("", placeholder="Enter mobile money service name", key="other_service")
+                payment_service = other_service
+            else:
+                payment_service = mobile_service
 
             st.markdown('<p class="required">Transaction ID:</p>', unsafe_allow_html=True)
             transaction_id = st.text_input("", placeholder="Enter transaction ID", key="transaction_id")
@@ -478,12 +390,12 @@ with tab3:
             **IBAN:** {bank_transfer_details['IBAN']}
             """)
             st.markdown('<p class="required">Transaction Reference:</p>', unsafe_allow_html=True)
-            transaction_ref = st.text_input("", placeholder="Enter bank transfer reference", key="transaction_ref")
+            transaction_id = st.text_input("", placeholder="Enter bank transfer reference", key="transaction_ref")
+            payment_service = "Bank Transfer"
 
         submit_button = st.button("Place Order")
 
         if submit_button:
-
             missing_fields = []
 
             if not name:
@@ -498,26 +410,26 @@ with tab3:
                 missing_fields.append("City")
             if not postal_code:
                 missing_fields.append("Postal Code")
-            # Make instructions required for custom/hand-painted items
+
             if has_custom_items and not instructions:
                 missing_fields.append("Instructions (required for custom/hand-painted items)")
             if payment_method == "Mobile Money (Jazzcash etc)":
-                if 'mobile_service' in locals() and mobile_service == "Other" and not (
-                        'other_service' in locals() and other_service):
+                if mobile_service == "Other" and not payment_service:
                     missing_fields.append("Mobile Money Service")
-                if 'transaction_id' not in locals() or not transaction_id:
+                if not transaction_id:
                     missing_fields.append("Transaction ID")
             elif payment_method == "Bank Transfer":
-                if 'transaction_ref' not in locals() or not transaction_ref:
+                if not transaction_id:
                     missing_fields.append("Transaction Reference")
 
             if missing_fields:
                 st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
             else:
-                successful_items = 0
                 order_number = generate_order_number()
                 order_rows = ""
                 total_amount = 0
+                all_order_data = []
+
                 for item_key, item_data in st.session_state.cart.items():
                     item_total = item_data['quantity'] * item_data['price']
                     total_amount += item_total
@@ -530,43 +442,38 @@ with tab3:
                             <td>Rs. {item_total}</td>
                         </tr>
                     """
-                    payment_service = None
-                    transaction_reference = None
+                    order_data = {
+                        "Order Number": order_number,
+                        "Name": name,
+                        "Email": email,
+                        "Phone no": phone,
+                        "Address": address_street,
+                        "City": address_city,
+                        "Post Code": postal_code,
+                        "Item Name": item_data['name'],
+                        "Item Style": item_data['style'],
+                        "Item Quantity": item_data['quantity'],
+                        "Price": item_data['price'],
+                        "Total": item_data['price'] * item_data['quantity'],
+                        "Instructions": instructions,
+                        "Order Date": order_date,
+                        "Payment Method": payment_method,
+                        "Payment Service": payment_service,
+                        "Transaction ID": transaction_id,
+                        "Payment Status": "Pending",
+                        "Status": "Pending"
+                    }
 
-                    if payment_method == "Mobile Money (Jazzcash etc)":
-                        payment_service = mobile_service if mobile_service != "Other" else other_service
-                        transaction_reference = transaction_id
-                    elif payment_method == "Bank Transfer":
-                        payment_service = "Bank Transfer"
-                        transaction_reference = transaction_ref
+                    all_order_data.append(order_data)
 
-                    order_data = [
-                        name,
-                        email,
-                        phone,
-                        address_street,
-                        address_city,
-                        postal_code,
-                        item_data['name'],
-                        item_data['style'],
-                        item_data['quantity'],
-                        item_data['price'],
-                        item_data['price'] * item_data['quantity'],
-                        instructions,
-                        order_date,
-                        payment_method,
-                        payment_service,
-                        transaction_reference,
-                        "Pending",
-                        "Pending"
-                    ]
-
-                    try:
-                        add_data(order_number, order_data)
-                        successful_items += 1
-                    except Exception as e:
-                        st.error(f"Failed to submit order for {item_key}: {str(e)}")
-                        continue
+                try:
+                    if add_orders_to_gsheet(all_order_data):
+                        successful_items = len(all_order_data)
+                    else:
+                        successful_items = 0
+                except Exception as e:
+                    st.error(f"Failed to submit orders: {str(e)}")
+                    successful_items = 0
 
                 if successful_items > 0:
                     html_body = f"""
@@ -600,7 +507,7 @@ with tab3:
                         </table>
 
                         <p><strong>Payment Method:</strong> {payment_method}<br>
-                           <strong>Transaction Reference:</strong> {transaction_reference or "N/A"}</p>
+                           <strong>Transaction Reference:</strong> {transaction_id or "N/A"}</p>
 
                         <p><strong>Special Instructions:</strong> {instructions or "N/A"}</p>
 
@@ -609,9 +516,10 @@ with tab3:
                     </html>
                     """
                     st.success(
-                        f"Order submitted successfully! {successful_items} item(s) added to your order. \n Email has been sent to {email} Please check your spam or junk!")
+                        f"Order submitted successfully! {successful_items} item(s) added to your order. \nEmail has been sent to {email}. Please check your spam or junk folder if you don't see it!")
                     st.toast(f"Order {order_number} has been placed successfully!")
-                    send_email(f"{order_number} has been placed successfully!", f"{html_body}", str(email))
+                    send_email(f"Tumble Cup Order {order_number} has been placed successfully!", html_body, email)
+
                     st.subheader("Order Summary")
                     summary_cols = st.columns(2)
                     with summary_cols[0]:
@@ -620,191 +528,15 @@ with tab3:
                                 f"**{item_key}:** {item_data['quantity']} × Rs. {item_data['price']} = Rs. {item_data['price'] * item_data['quantity']}")
                         st.write(f"**Total:** Rs. {cart_total}")
                     with summary_cols[1]:
+                        st.write(f"**Order Number:** {order_number}")
                         st.write(f"**Order Date:** {order_date}")
                         st.write(f"**Payment Method:** {payment_method}")
                         st.write(f"**Delivery Address:** {address_street}, {address_city}, {postal_code}")
-                        st.write(f"**Instructions:** {instructions}")
+                        st.write(f"**Instructions:** {instructions or 'None provided'}")
                         st.write(f"**Status:** Pending")
-
                     st.session_state.cart = {}
+
+                    time.sleep(5)
+                    st.rerun()
                 else:
                     st.error("Failed to submit any items in your order. Please try again.")
-
-with tab4:
-    st.header("Admin Panel")
-    admin_password = st.text_input("Enter Admin Password", type="password")
-    pwd = st.secrets["Password"]["Password"]
-    if admin_password == str(pwd):
-        st.success("Admin authenticated!")
-        selected_month = st.selectbox(
-            "Select Month",
-            month_list,
-            index=current_month - 1,
-            placeholder="Select Month"
-        )
-        selected_month_number = month_list.index(selected_month) + 1 if selected_month else None
-        orders_df = get_orders(selected_month_number)
-        orders_df["order_date"] = pd.to_datetime(orders_df["order_date"], errors="coerce").dt.strftime("%d-%B-%Y")
-        if not orders_df.empty:
-            search_term = st.text_input("Search by Name or Order Number", placeholder="Enter Search Term",
-                                        key="search_term")
-            if search_term:
-                orders_df = orders_df[orders_df['customer_name'].str.contains(search_term, case=False) |
-                                      orders_df['order_number'].str.contains(search_term, case=False)]
-
-                if orders_df.empty:
-                    st.warning("No such orders found!")
-                else:
-
-                    status_filter = st.multiselect("Filter by Status", options=orders_df['status'].unique().tolist(),
-                                                   default=orders_df['status'].unique().tolist())
-                    payment_filter = st.multiselect("Filter by Payment Status",
-                                                    options=orders_df['payment_status'].unique().tolist(),
-                                                    default=orders_df['payment_status'].unique().tolist())
-
-                    filtered_df = orders_df[orders_df['status'].isin(status_filter) &
-                                            orders_df['payment_status'].isin(payment_filter)]
-
-                    st.dataframe(filtered_df)
-
-                    st.subheader("Update Order Status")
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        order_id = st.number_input("Order ID", min_value=1, max_value=int(orders_df['id'].max()),
-                                                   step=1)
-                    with col2:
-                        new_status = st.selectbox("New Status",
-                                                  ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
-                    with col3:
-                        if st.button("Update Status"):
-                            conn = init_db()
-                            c = conn.cursor()
-                            c.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
-                            conn.commit()
-                            conn.close()
-                            st.success(f"Order #{order_id} status updated to {new_status}")
-                            st.rerun()
-                    if st.button("Export Orders to CSV"):
-                        csv = filtered_df.to_csv(index=False)
-                        st.download_button(
-                            label="Download CSV",
-                            data=csv,
-                            file_name=f"tumble_cup_orders_{datetime.today().strftime('%Y-%m-%d')}.csv",
-                            mime="text/csv"
-                        )
-            else:
-
-                status_filter = st.multiselect("Filter by Status", options=orders_df['status'].unique().tolist(),
-                                               default=orders_df['status'].unique().tolist())
-                payment_filter = st.multiselect("Filter by Payment Status",
-                                                options=orders_df['payment_status'].unique().tolist(),
-                                                default=orders_df['payment_status'].unique().tolist())
-
-                filtered_df = orders_df[orders_df['status'].isin(status_filter) &
-                                        orders_df['payment_status'].isin(payment_filter)]
-                st.dataframe(filtered_df)
-
-                st.subheader("Update Order & Payment Status")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    order_id = st.number_input("Order ID", min_value=1,
-                                               max_value=int(orders_df['id'].max()) if not orders_df.empty else 1,
-                                               step=1)
-                    payment_order_id = st.number_input("Payment Order ID", min_value=1,
-                                                       max_value=int(
-                                                           orders_df['id'].max()) if not orders_df.empty else 1,
-                                                       step=1)
-                    delete_order_id = st.number_input("Delete Order ID", min_value=1,
-                                                      max_value=int(
-                                                          orders_df['id'].max()) if not orders_df.empty else 1,
-                                                      step=1)
-                with col2:
-                    new_status = st.selectbox("New Status",
-                                              ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"])
-                    payment_new_status = st.selectbox("Payment New Status",
-                                                      ["Pending", "Processing", "Confirmed", "Cancelled"])
-                with col3:
-                    if st.button("Update Status"):
-                        conn = init_db()
-                        c = conn.cursor()
-                        c.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Order #{order_id} status updated to {new_status}")
-                        st.rerun()
-
-                    if st.button("Update Payment Status"):
-                        conn = init_db()
-                        c = conn.cursor()
-                        c.execute("UPDATE orders SET payment_status = ? WHERE id = ?",
-                                  (payment_new_status, payment_order_id))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Order #{payment_order_id} payment status updated to {payment_new_status}")
-                        st.rerun()
-
-                    if st.button("Delete Order"):
-                        conn = init_db()
-                        c = conn.cursor()
-                        c.execute("DELETE FROM orders WHERE id = ?",
-                                  (delete_order_id,))
-                        conn.commit()
-                        conn.close()
-                        st.success(f"Order #{delete_order_id} has been deleted")
-                        st.rerun()
-
-                if st.button("Export Orders to CSV"):
-                    csv = filtered_df.to_csv(index=False)
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv,
-                        file_name=f"tumble_cup_orders_{datetime.today().strftime('%Y-%m-%d')}.csv",
-                        mime="text/csv"
-                    )
-                st.subheader("Database Security Tools")
-                if st.button("Check Encryption Status"):
-                    try:
-
-                        conn = init_db()
-                        c = conn.cursor()
-                        c.execute("SELECT customer_name FROM orders LIMIT 1")
-                        sample = c.fetchone()
-                        conn.close()
-
-                        if sample and sample[0]:
-                            try:
-                                decrypt_data(sample[0])
-                                st.success("✅ Database encryption is active and working correctly!")
-                            except:
-                                st.warning("⚠️ Some records may not be encrypted. Consider upgrading all records.")
-                        else:
-                            st.info("No records found to check encryption status.")
-                    except Exception as e:
-                        st.error(f"Error checking encryption: {str(e)}")
-
-                if st.button("Backup Database"):
-                    try:
-                        import shutil
-
-                        backup_file = f"tumblecup_backup_{datetime.today().strftime('%Y%m%d_%H%M%S')}.db"
-                        shutil.copy2(DB_PATH, backup_file)
-
-                        with open(backup_file, "rb") as f:
-                            bytes_data = f.read()
-
-                        st.download_button(
-                            label="Download Database Backup",
-                            data=bytes_data,
-                            file_name=backup_file,
-                            mime="application/octet-stream"
-                        )
-                        st.success(f"Database backed up successfully as {backup_file}")
-                    except Exception as e:
-                        st.error(f"Backup failed: {str(e)}")
-        else:
-            st.info("No orders found in the database.")
-    elif admin_password:
-        st.error("Incorrect password")
-
-if __name__ == '__main__':
-    init_db()
