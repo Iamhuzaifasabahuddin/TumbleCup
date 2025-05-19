@@ -27,6 +27,10 @@ tumbler_items = {
     }
 }
 
+# Additional fee for custom and hand-painted styles
+CUSTOM_FEE = 250
+HANDPAINTED_FEE = 500
+
 month_list = list(calendar.month_name)[1:]
 current_month = datetime.today().month
 current_month_name = calendar.month_name[current_month]
@@ -39,7 +43,7 @@ if 'cart' not in st.session_state:
 def generate_order_number():
     """Generate a unique order number"""
     try:
-        data = conn.read(worksheet="Tumble_cup")
+        data = conn.read(worksheet="Tumble_cup", ttl=0)
         if not data.empty and 'Order Number' in data.columns:
             print("hi")
             numeric_parts = []
@@ -88,7 +92,7 @@ def send_email(subject, body, to_email):
 def add_orders_to_gsheet(orders_data):
     """Add new orders to Google Sheet with auto-incremented ID"""
     try:
-        existing_data = conn.read(worksheet="Tumble_cup")
+        existing_data = conn.read(worksheet="Tumble_cup", ttl=0)
 
         new_orders_df = pd.DataFrame(orders_data)
         if not existing_data.empty:
@@ -97,7 +101,7 @@ def add_orders_to_gsheet(orders_data):
             else:
                 starting_id = len(existing_data)
         else:
-            starting_id = 0
+            starting_id = 1
 
         new_orders_df.insert(0, "ID", range(starting_id, starting_id + len(new_orders_df)))
 
@@ -117,11 +121,10 @@ def add_orders_to_gsheet(orders_data):
         return False
 
 
-
 def get_orders(month=None):
     """Retrieve orders optionally filtered by month"""
     try:
-        data = conn.read(worksheet="Tumble_cup")
+        data = conn.read(worksheet="Tumble_cup", ttl=0)
         if data.empty:
             return pd.DataFrame()
 
@@ -141,7 +144,7 @@ def get_orders(month=None):
 def count_orders():
     """Count total number of orders"""
     try:
-        data = conn.read(worksheet="Tumble_cup")
+        data = conn.read(worksheet="Tumble_cup", ttl=0)
         if data.empty:
             return 0
         return len(data)
@@ -158,9 +161,27 @@ def has_custom_or_hand_painted_items():
     return False
 
 
+def get_item_price(base_price, style):
+    """Calculate item price including any extra fees for custom/hand-painted styles"""
+    if style == "Custom":
+        return base_price + CUSTOM_FEE
+    elif style == "Hand Painted":
+        return base_price + HANDPAINTED_FEE
+    return base_price
+
+
+def get_style_fee(style):
+    """Return the additional fee for a specific style"""
+    if style == "Custom":
+        return CUSTOM_FEE
+    elif style == "Hand Painted":
+        return HANDPAINTED_FEE
+    return 0
+
+
 st.markdown("<h1 style='text-align: center; color: orange;'>Tumble Cup</h1>", unsafe_allow_html=True)
 
-tab1, tab2, tab3= st.tabs(["Shop Items", "Cart", "Checkout"])
+tab1, tab2, tab3 = st.tabs(["Shop Items", "Cart", "Checkout"])
 
 # Shop Items Tab
 with tab1:
@@ -171,7 +192,8 @@ with tab1:
 
         with col1:
             st.write(f"**{item_name}**")
-            st.write(f"Price: Rs. {item_info['price']}")
+            st.write(
+                f"Price: Rs. {item_info['price']} (+ Rs. {CUSTOM_FEE} for Custom, + Rs. {HANDPAINTED_FEE} for Hand Painted)")
 
         with col2:
             style = st.selectbox(
@@ -185,14 +207,20 @@ with tab1:
 
         with col4:
             if st.button("Add to Cart", key=f"add_{item_name}"):
+                item_price = get_item_price(item_info['price'], style)
                 item_key = f"{item_name} ({style})"
+
                 if item_key in st.session_state.cart:
                     st.session_state.cart[item_key]['quantity'] += quantity
                 else:
                     st.session_state.cart[item_key] = {
                         'name': item_name,
                         'style': style,
-                        'price': item_info['price'],
+                        'price': item_price,
+                        'base_price': item_info['price'],
+                        'style_fee': get_style_fee(style),
+                        'has_custom_fee': style == "Custom",
+                        'has_handpainted_fee': style == "Hand Painted",
                         'quantity': quantity
                     }
                 st.success(f"Added {quantity} {item_name} ({style}) to cart!")
@@ -211,7 +239,12 @@ with tab1:
 
             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
             with col1:
-                st.write(f"**{item_key}**")
+                display_name = f"{item_key}"
+                if item_data['has_custom_fee']:
+                    display_name += f" (Includes Rs. {CUSTOM_FEE} custom fee)"
+                elif item_data['has_handpainted_fee']:
+                    display_name += f" (Includes Rs. {HANDPAINTED_FEE} hand-painted fee)"
+                st.write(f"**{display_name}**")
             with col2:
                 st.write(f"Qty: {item_data['quantity']}")
             with col3:
@@ -219,17 +252,16 @@ with tab1:
             with col4:
                 if st.button("Remove", key=f"remove_{item_key}"):
                     del st.session_state.cart[item_key]
-
-                    time.sleep(5)
+                    time.sleep(0.5)
                     st.rerun()
 
         st.write(f"**Total: Rs. {total_cart_price}**")
 
         if st.button("Clear Cart"):
             st.session_state.cart = {}
-
-            time.sleep(5)
-            st.rerun()
+            st.info("Emptying your cart.....")
+            time.sleep(2)
+            st.rerun("app")
     else:
         st.info("Your cart is empty. Add some items!")
 
@@ -261,7 +293,12 @@ with tab2:
 
             col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
             with col1:
-                st.write(f"**{item_key}**")
+                display_name = f"{item_key}"
+                if item_data['has_custom_fee']:
+                    display_name += f" (Includes Rs. {CUSTOM_FEE} custom fee)"
+                elif item_data['has_handpainted_fee']:
+                    display_name += f" (Includes Rs. {HANDPAINTED_FEE} hand-painted fee)"
+                st.write(f"**{display_name}**")
             with col2:
                 st.write(f"Qty: {item_data['quantity']}")
             with col3:
@@ -276,8 +313,7 @@ with tab2:
         if st.button("Clear Cart", key="tab2_clear"):
             st.session_state.cart = {}
             st.info("Your Cart has been Cleared!")
-
-            time.sleep(5)
+            time.sleep(0.5)
             st.rerun()
     else:
         st.info("Your cart is empty. Add some items!")
@@ -295,9 +331,14 @@ with tab3:
 
         for item_key, item_data in st.session_state.cart.items():
             item_total = item_data['quantity'] * item_data['price']
-            st.write(f"{item_key} × {item_data['quantity']} = Rs. {item_total}")
 
-            # Highlight custom/hand-painted items that will need instructions
+            price_display = f"{item_key} × {item_data['quantity']} = Rs. {item_total}"
+            if item_data['has_custom_fee']:
+                price_display += f" (Includes Rs. {CUSTOM_FEE} custom fee per item)"
+            elif item_data['has_handpainted_fee']:
+                price_display += f" (Includes Rs. {HANDPAINTED_FEE} hand-painted fee per item)"
+            st.write(price_display)
+
             if item_data['style'] in ["Custom", "Hand Painted"]:
                 st.info(f"Note: '{item_data['style']}' items require detailed instructions")
 
@@ -433,15 +474,31 @@ with tab3:
                 for item_key, item_data in st.session_state.cart.items():
                     item_total = item_data['quantity'] * item_data['price']
                     total_amount += item_total
+
+                    price_display = f"Rs. {item_data['price']}"
+                    if item_data['has_custom_fee']:
+                        price_display = f"Rs. {item_data['base_price']} + Rs. {CUSTOM_FEE} (custom)"
+                    elif item_data['has_handpainted_fee']:
+                        price_display = f"Rs. {item_data['base_price']} + Rs. {HANDPAINTED_FEE} (hand-painted)"
+
                     order_rows += f"""
                         <tr>
                             <td>{item_data['name']}</td>
                             <td>{item_data['style']}</td>
                             <td>{item_data['quantity']}</td>
-                            <td>Rs. {item_data['price']}</td>
+                            <td>{price_display}</td>
                             <td>Rs. {item_total}</td>
                         </tr>
                     """
+                    style_fee = 0
+                    fee_type = ""
+                    if item_data['has_custom_fee']:
+                        style_fee = CUSTOM_FEE
+                        fee_type = "Custom Fee"
+                    elif item_data['has_handpainted_fee']:
+                        style_fee = HANDPAINTED_FEE
+                        fee_type = "Hand-Painted Fee"
+
                     order_data = {
                         "Order Number": order_number,
                         "Name": name,
@@ -453,6 +510,9 @@ with tab3:
                         "Item Name": item_data['name'],
                         "Item Style": item_data['style'],
                         "Item Quantity": item_data['quantity'],
+                        "Base Price": item_data['base_price'],
+                        "Style Fee Type": fee_type,
+                        "Style Fee": style_fee,
                         "Price": item_data['price'],
                         "Total": item_data['price'] * item_data['quantity'],
                         "Instructions": instructions,
@@ -524,8 +584,13 @@ with tab3:
                     summary_cols = st.columns(2)
                     with summary_cols[0]:
                         for item_key, item_data in st.session_state.cart.items():
-                            st.write(
-                                f"**{item_key}:** {item_data['quantity']} × Rs. {item_data['price']} = Rs. {item_data['price'] * item_data['quantity']}")
+                            price_display = f"**{item_key}:** {item_data['quantity']} × Rs. {item_data['price']}"
+                            if item_data['has_custom_fee']:
+                                price_display += f" (includes Rs. {CUSTOM_FEE} custom fee per item)"
+                            elif item_data['has_handpainted_fee']:
+                                price_display += f" (includes Rs. {HANDPAINTED_FEE} hand-painted fee per item)"
+                            price_display += f" = Rs. {item_data['price'] * item_data['quantity']}"
+                            st.write(price_display)
                         st.write(f"**Total:** Rs. {cart_total}")
                     with summary_cols[1]:
                         st.write(f"**Order Number:** {order_number}")
@@ -535,8 +600,9 @@ with tab3:
                         st.write(f"**Instructions:** {instructions or 'None provided'}")
                         st.write(f"**Status:** Pending")
                     st.session_state.cart = {}
-
                     time.sleep(5)
-                    st.rerun()
+                    st.rerun(scope="app")
                 else:
                     st.error("Failed to submit any items in your order. Please try again.")
+                    time.sleep(5)
+                    st.rerun(scope="app")
