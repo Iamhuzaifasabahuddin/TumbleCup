@@ -3,3 +3,5 @@
 Test.py
 Sqlite3.py
 .streamlit/secrets.toml
+*.xml
+
