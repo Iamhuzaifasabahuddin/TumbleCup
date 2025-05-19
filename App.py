@@ -304,33 +304,33 @@ with tab1:
     st.divider()
     total_items = sum(item['quantity'] for item in st.session_state.cart.values())
     st.markdown(f"🛒 **Total Items in Cart: {total_items}**")
-    if st.session_state.cart:
-        st.subheader("Current Cart")
-
-        total_cart_price = 0
-        for item_key, item_data in st.session_state.cart.items():
-            item_total = item_data['price'] * item_data['quantity']
-            total_cart_price += item_total
-
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-            with col1:
-                st.write(f"**{item_key}**")
-            with col2:
-                st.write(f"Qty: {item_data['quantity']}")
-            with col3:
-                st.write(f"Rs. {item_total}")
-            with col4:
-                if st.button("Remove", key=f"remove_{item_key}"):
-                    del st.session_state.cart[item_key]
-                    st.rerun()
-
-        st.write(f"**Total: Rs. {total_cart_price}**")
-
-        if st.button("Clear Cart"):
-            st.session_state.cart = {}
-            st.rerun()
-    else:
-        st.info("Your cart is empty. Add some items!")
+    # if st.session_state.cart:
+    #     st.subheader("Current Cart")
+    #
+    #     total_cart_price = 0
+    #     for item_key, item_data in st.session_state.cart.items():
+    #         item_total = item_data['price'] * item_data['quantity']
+    #         total_cart_price += item_total
+    #
+    #         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+    #         with col1:
+    #             st.write(f"**{item_key}**")
+    #         with col2:
+    #             st.write(f"Qty: {item_data['quantity']}")
+    #         with col3:
+    #             st.write(f"Rs. {item_total}")
+    #         with col4:
+    #             if st.button("Remove", key=f"remove_{item_key}"):
+    #                 del st.session_state.cart[item_key]
+    #                 st.rerun()
+    #
+    #     st.write(f"**Total: Rs. {total_cart_price}**")
+    #
+    #     if st.button("Clear Cart"):
+    #         st.session_state.cart = {}
+    #         st.rerun()
+    # else:
+    #     st.info("Your cart is empty. Add some items!")
 
 
 st.markdown("""
@@ -386,14 +386,12 @@ with tab3:
         cart_total = sum(item['price'] * item['quantity'] for item in st.session_state.cart.values())
         st.subheader("Cart Summary")
 
-        # Flag to check if any custom/hand-painted items are in the cart
         has_custom_items = has_custom_or_hand_painted_items()
 
         for item_key, item_data in st.session_state.cart.items():
             item_total = item_data['price'] * item_data['quantity']
             st.write(f"{item_key} × {item_data['quantity']} = Rs. {item_total}")
 
-            # Highlight custom/hand-painted items that will need instructions
             if item_data['style'] in ["Custom", "Hand Painted"]:
                 st.info(f"Note: '{item_data['style']}' items require detailed instructions")
 
