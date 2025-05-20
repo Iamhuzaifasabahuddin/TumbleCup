@@ -6,6 +6,7 @@ from email.message import EmailMessage
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
 from streamlit_gsheets import GSheetsConnection
 
 st.set_page_config(page_title="Tumble Cup", page_icon="🥤", layout="wide")
@@ -21,13 +22,13 @@ tumbler_items = {
         "price": 1999,
         "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
     },
-    "Coffee Cup": {
+    "Coffee Mug": {
         "price": 2399,
         "styles": ["Style 1", "Style 2", "Style 3", "Style 4", "Custom", "Hand Painted"]
     }
 }
 
-# Additional fee for custom and hand-painted styles
+
 CUSTOM_FEE = 250
 HANDPAINTED_FEE = 500
 
@@ -179,8 +180,33 @@ def get_style_fee(style):
     return 0
 
 
-st.markdown("<h1 style='text-align: center; color: orange;'>Tumble Cup</h1>", unsafe_allow_html=True)
+st.markdown("""
+    <style>
+        .title {
+            text-align: center;
+            color: orange;
+            font-size: 48px;
+            font-weight: bold;
+        }
+        .quote {
+            text-align: center;
+            font-size: 24px;
+            font-style: italic;
+            color: #6c757d;
+            margin-top: 10px;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
+st.markdown("<div class='title'>Order Tumble Cup</div>", unsafe_allow_html=True)
+
+image = Image.open("Tumblecup.jpeg")
+left_co, cent_co, right_co = st.columns([1, 2, 1])
+with cent_co:
+    st.image(image, width=500)
+
+# Motivational Quote
+st.markdown("<div class='quote'>“Hydrate and glow – your body will thank you.”</div>", unsafe_allow_html=True)
 tab1, tab2, tab3 = st.tabs(["Shop Items", "Cart", "Checkout"])
 
 # Shop Items Tab
@@ -203,7 +229,7 @@ with tab1:
             )
 
         with col3:
-            quantity = st.number_input(f"Qty", min_value=1, value=1, key=f"qty_{item_name}")
+            quantity = st.number_input(f"Qty", min_value=1, value=1, key=f"qty_{item_name}", step=1)
 
         with col4:
             if st.button("Add to Cart", key=f"add_{item_name}"):
