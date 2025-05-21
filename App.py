@@ -203,7 +203,7 @@ st.markdown("<div class='title'>Order Tumble Cup</div>", unsafe_allow_html=True)
 image = Image.open("Tumblecup.jpeg")
 left_co, cent_co, right_co = st.columns([1, 2, 1])
 with cent_co:
-    st.image(image, width=500)
+    st.image(image, width=1000)
 
 # Motivational Quote
 st.markdown("<div class='quote'>“Hydrate and glow – your body will thank you.”</div>", unsafe_allow_html=True)
@@ -547,7 +547,9 @@ with tab3:
                         "Payment Service": payment_service,
                         "Transaction ID": transaction_id,
                         "Payment Status": "Pending",
-                        "Status": "Pending"
+                        "Status": "Pending",
+                        "Tracking ID": "",
+                        "Tracking Partner": ""
                     }
 
                     all_order_data.append(order_data)
