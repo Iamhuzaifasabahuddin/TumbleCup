@@ -1,4 +1,5 @@
 import calendar
+import re
 import smtplib
 import time
 from datetime import datetime
@@ -28,7 +29,6 @@ tumbler_items = {
     }
 }
 
-
 CUSTOM_FEE = 250
 HANDPAINTED_FEE = 500
 
@@ -39,6 +39,22 @@ current_year = datetime.today().year
 
 if 'cart' not in st.session_state:
     st.session_state.cart = {}
+
+
+def is_valid_email(email):
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+
+def format_phone_number(phone):
+    phone_digits = re.sub(r'\D', '', phone)
+
+    if phone_digits.startswith('0'):
+        phone_digits = '92' + phone_digits[1:]
+    elif not phone_digits.startswith('92'):
+        phone_digits = '92' + phone_digits
+
+    return '+' + phone_digits
 
 
 def generate_order_number():
@@ -378,7 +394,8 @@ with tab3:
         email = st.text_input("", placeholder="Enter your email", key="email_input")
 
         st.markdown('<p class="required">Phone</p>', unsafe_allow_html=True)
-        phone = st.text_input("", placeholder="Enter your phone", key="phone_input")
+        phone = st.text_input("", placeholder="Enter your phone (e.g., 03001234567)", key="phone_input",
+                              help="Phone number will be automatically formatted with +92 country code")
 
         st.subheader("Delivery Address")
         st.markdown('<p class="required">Street Address</p>', unsafe_allow_html=True)
@@ -464,11 +481,15 @@ with tab3:
 
         if submit_button:
             missing_fields = []
+            validation_errors = []
 
+            # Basic field validation
             if not name:
                 missing_fields.append("Name")
             if not email:
                 missing_fields.append("Email")
+            elif not is_valid_email(email):
+                validation_errors.append("Please enter a valid email address")
             if not phone:
                 missing_fields.append("Phone")
             if not address_street:
@@ -478,8 +499,11 @@ with tab3:
             if not postal_code:
                 missing_fields.append("Postal Code")
 
+            # Custom items validation
             if has_custom_items and not instructions:
                 missing_fields.append("Instructions (required for custom/hand-painted items)")
+
+            # Payment method validation
             if payment_method == "Mobile Money (Jazzcash etc)":
                 if mobile_service == "Other" and not payment_service:
                     missing_fields.append("Mobile Money Service")
@@ -489,9 +513,14 @@ with tab3:
                 if not transaction_id:
                     missing_fields.append("Transaction Reference")
 
+            # Display errors
             if missing_fields:
                 st.error(f"Please fill in all required fields: {', '.join(missing_fields)}")
+            elif validation_errors:
+                for error in validation_errors:
+                    st.error(error)
             else:
+                formatted_phone = format_phone_number(phone)
                 order_number = generate_order_number()
                 order_rows = ""
                 total_amount = 0
@@ -529,7 +558,7 @@ with tab3:
                         "Order Number": order_number,
                         "Name": name,
                         "Email": email,
-                        "Phone no": phone,
+                        "Phone no": formatted_phone,
                         "Address": address_street,
                         "City": address_city,
                         "Post Code": postal_code,
@@ -566,42 +595,65 @@ with tab3:
                 if successful_items > 0:
                     html_body = f"""
                     <html>
-                    <body>
-                        <h2 style="color: orange;">Thank you for your order!</h2>
-                        <p><strong>Order Number:</strong> {order_number}</p>
-                        <p><strong>Name:</strong> {name}<br>
-                           <strong>Email:</strong> {email}<br>
-                           <strong>Phone:</strong> {phone}<br>
-                           <strong>Address:</strong> {address_street}, {address_city}, {postal_code}</p>
+  <body style="margin: 0; padding: 0; background-color: #fef9f6; font-family: 'Segoe UI', sans-serif;">
 
-                        <h3>Order Summary</h3>
-                        <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
-                            <thead style="background-color: #f2f2f2;">
-                                <tr>
-                                    <th>Item</th>
-                                    <th>Style</th>
-                                    <th>Qty</th>
-                                    <th>Unit Price</th>
-                                    <th>Total</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {order_rows}
-                                <tr>
-                                    <td colspan="4"><strong>Total Amount</strong></td>
-                                    <td><strong>Rs. {total_amount}</strong></td>
-                                </tr>
-                            </tbody>
-                        </table>
+    <div style="max-width: 600px; margin: 0 auto; padding: 40px 30px; background-color: #ffffff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">
 
-                        <p><strong>Payment Method:</strong> {payment_method}<br>
-                           <strong>Transaction Reference:</strong> {transaction_id or "N/A"}</p>
+      <h1 style="color: #ff7b00; text-align: center; font-size: 28px;">Thank You for Your Order! 🧡</h1>
+      <p style="text-align: center; font-size: 16px; color: #555;">
+        Your order has been received and is being processed.
+      </p>
 
-                        <p><strong>Special Instructions:</strong> {instructions or "N/A"}</p>
+      <div style="margin-top: 30px; font-size: 15px; color: #333;">
+        <p><strong>Order Number:</strong> {order_number}</p>
+        <p>
+          <strong>Name:</strong> {name}<br>
+          <strong>Email:</strong> {email}<br>
+          <strong>Phone:</strong> {phone}<br>
+          <strong>Address:</strong> {address_street}, {address_city}, {postal_code}
+        </p>
+      </div>
 
-                        <p>We will process your order shortly. Thank you for shopping with Tumble Cup!</p>
-                    </body>
-                    </html>
+
+      <h3 style="color: #ff7b00; border-bottom: 1px solid #eee; padding-bottom: 5px;">🧾 Order Summary</h3>
+      <table cellpadding="10" cellspacing="0" style="width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 20px;">
+        <thead style="background-color: #ffecd9; color: #333;">
+          <tr>
+            <th align="left">Item</th>
+            <th align="left">Style</th>
+            <th align="center">Qty</th>
+            <th align="right">Unit Price</th>
+            <th align="right">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {order_rows}
+          <tr style="border-top: 1px solid #eee;">
+            <td colspan="4" align="right"><strong>Total Amount</strong></td>
+            <td align="right"><strong>Rs. {total_amount}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size: 14px; color: #444;">
+        <strong>Payment Method:</strong> {payment_method}<br>
+        <strong>Transaction Reference:</strong> {transaction_id or "N/A"}<br>
+        <strong>Special Instructions:</strong> {instructions or "N/A"}
+      </p>
+
+      <p style="font-size: 15px; color: #333; margin-top: 30px;">
+        We'll begin preparing your order right away.  
+        Thank you for choosing <strong>Tumble Cup</strong>! 🥤
+      </p>
+
+    </div>
+    <div style="text-align: center; padding: 15px 0; font-size: 12px; color: #888;">
+      &copy; 2025 Tumble Cup. All rights reserved. <br>
+      hello
+    </div>
+
+  </body>
+</html>
+
                     """
                     st.success(
                         f"Order submitted successfully! {successful_items} item(s) added to your order. \nEmail has been sent to {email}. Please check your spam or junk folder if you don't see it!")
