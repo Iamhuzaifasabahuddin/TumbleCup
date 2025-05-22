@@ -314,9 +314,9 @@ st.markdown("""
     content: " *";
     color: red;
 }
-.st-emotion-cache-1weic72 {
-display: none;
-}
+# .st-emotion-cache-1weic72 {
+# display: none;
+# }
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
 </style>
