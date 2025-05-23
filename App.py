@@ -10,7 +10,7 @@ import streamlit as st
 from PIL import Image
 from streamlit_gsheets import GSheetsConnection
 
-st.set_page_config(page_title="Tumble Cup", page_icon="🥤", layout="wide")
+st.set_page_config(page_title="Tumble Cup", page_icon="🥤", layout="centered")
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
